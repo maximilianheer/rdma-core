@@ -1,0 +1,6 @@
+SCENIC_IB_1.0 {
+    global: 
+        *; 
+    local:
+        *; 
+}
