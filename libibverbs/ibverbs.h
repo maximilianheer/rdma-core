@@ -65,6 +65,7 @@ int setup_sysfs_uverbs(int uv_dirfd, const char *uverbs,
 static inline void load_drivers(void)
 {
 }
+printf("STATIC BUILD: load_drivers no-op\n");	
 #else
 void load_drivers(void);
 #endif

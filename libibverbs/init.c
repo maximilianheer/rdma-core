@@ -221,6 +221,8 @@ void verbs_register_driver(const struct verbs_device_ops *ops)
 {
 	struct ibv_driver *driver;
 
+	printf("DEBUG: Registering driver %s\n", ops->name);
+
 	driver = malloc(sizeof *driver);
 	if (!driver) {
 		fprintf(stderr,
@@ -359,8 +361,12 @@ static struct verbs_device *try_driver(const struct verbs_device_ops *ops,
 	struct verbs_device *vdev;
 	struct ibv_device *dev;
 
-	if (!match_device(ops, sysfs_dev))
+	printf("DEBUG: In try_driver for driver %s and sysfs device %s\n", ops->name, sysfs_dev->sysfs_name);
+
+	if (!match_device(ops, sysfs_dev)) {
+		printf("DEBUG: Driver %s did not match device %s\n", ops->name, sysfs_dev->sysfs_name);
 		return NULL;
+	}
 
 	vdev = ops->alloc_device(sysfs_dev);
 	if (!vdev) {
@@ -421,25 +427,36 @@ static struct verbs_device *try_drivers(struct verbs_sysfs_dev *sysfs_dev)
 	struct ibv_driver *driver;
 	struct verbs_device *dev;
 
+	printf("DEBUG: In try_drivers for sysfs device %s\n", sysfs_dev->sysfs_name);
+
 	/*
 	 * Matching by driver_id takes priority over other match types, do it
 	 * first.
 	 */
 	if (sysfs_dev->driver_id != RDMA_DRIVER_UNKNOWN) {
+		printf("DEBUG: Trying to match by driver ID %u\n", sysfs_dev->driver_id);
 		list_for_each (&driver_list, driver, entry) {
+			printf("DEBUG: Trying driver %s\n", driver->ops->name);
 			if (match_driver_id(driver->ops, sysfs_dev)) {
+				printf("DEBUG: Driver %s matched by driver ID\n", driver->ops->name);
 				dev = try_driver(driver->ops, sysfs_dev);
+				printf("DEBUG: try_driver returned %p\n", dev);
 				if (dev)
 					return dev;
 			}
 		}
 	}
 
+	printf("DEBUG: Trying all drivers\n");
+
 	list_for_each(&driver_list, driver, entry) {
+		printf("DEBUG: Trying driver %s\n", driver->ops->name);
 		dev = try_driver(driver->ops, sysfs_dev);
 		if (dev)
 			return dev;
 	}
+
+	printf("DEBUG: No drivers matched device %s\n", sysfs_dev->sysfs_name);
 
 	return NULL;
 }
@@ -517,7 +534,10 @@ static void try_all_drivers(struct list_head *sysfs_list,
 	struct verbs_sysfs_dev *tmp;
 	struct verbs_device *vdev;
 
+	printf("DEBUG: In try_all_drivers\n");
+
 	list_for_each_safe(sysfs_list, sysfs_dev, tmp, entry) {
+		printf("DEBUG: Trying to match sysfs device %s\n", sysfs_dev->sysfs_name);
 		vdev = try_drivers(sysfs_dev);
 		if (vdev) {
 			list_del(&sysfs_dev->entry);
@@ -530,7 +550,9 @@ static void try_all_drivers(struct list_head *sysfs_list,
 
 int ibverbs_get_device_list(struct list_head *device_list)
 {
+	printf("DEBUG: Calling ibverbs_get_device_list \n"); 
 	LIST_HEAD(sysfs_list);
+	printf("DEBUG: After LIST_HEAD in ibverbs_get_device_list \n");
 	struct verbs_sysfs_dev *sysfs_dev, *next_dev;
 	struct verbs_device *vdev, *tmp;
 	static int drivers_loaded;
@@ -538,6 +560,9 @@ int ibverbs_get_device_list(struct list_head *device_list)
 	int ret;
 
 	ret = find_sysfs_devs_nl(&sysfs_list);
+
+	printf("DEBUG: Netlink returned: %d (0 means success/done). List is %p\n", ret, sysfs_list);
+
 	if (ret) {
 		ret = find_sysfs_devs(&sysfs_list);
 		if (ret)
@@ -545,7 +570,9 @@ int ibverbs_get_device_list(struct list_head *device_list)
 	}
 
 	if (!list_empty(&sysfs_list)) {
+		printf("DEBUG: Sysfs list is not empty after netlink scan\n");
 		ret = check_abi_version();
+		printf("DEBUG: After check_abi_version ret is %d\n", ret);	
 		if (ret)
 			return -ret;
 	}
@@ -555,20 +582,25 @@ int ibverbs_get_device_list(struct list_head *device_list)
 	 * present in the sysfs_list.
 	 */
 	list_for_each_safe(device_list, vdev, tmp, entry) {
+		printf("DEBUG: Checking existing device %s\n", vdev->device.dev_name);
 		struct verbs_sysfs_dev *old_sysfs = NULL;
 
 		list_for_each(&sysfs_list, sysfs_dev, entry) {
+			printf("DEBUG: Comparing to sysfs device %s\n", sysfs_dev->sysfs_name);
 			if (same_sysfs_dev(vdev->sysfs, sysfs_dev)) {
+				printf("DEBUG: Match found\n");
 				old_sysfs = sysfs_dev;
 				break;
 			}
 		}
 
 		if (old_sysfs) {
+			printf("DEBUG: Updating existing device %s\n", vdev->device.dev_name);
 			list_del(&old_sysfs->entry);
 			free(old_sysfs);
 			num_devices++;
 		} else {
+			printf("DEBUG: Removing stale device %s\n", vdev->device.dev_name);
 			list_del(&vdev->entry);
 			ibverbs_device_put(&vdev->device);
 		}

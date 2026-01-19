@@ -115,11 +115,14 @@ static void read_config_file(const char *path)
 
 static void read_config(void)
 {
+	printf("DEBUG: In read_config \n");
 	DIR *conf_dir;
 	struct dirent *dent;
 	char *path;
 
 	conf_dir = opendir(IBV_CONFIG_DIR);
+	
+	printf("DEBUG: Opened config dir %s: %p\n", IBV_CONFIG_DIR, conf_dir);
 	if (!conf_dir) {
 		fprintf(stderr,
 			PFX "Warning: couldn't open config directory '%s'.\n",
@@ -211,6 +214,7 @@ out_dlopen:
 
 void load_drivers(void)
 {
+	printf("DEBUG: In load_drivers \n"); 
 	struct ibv_driver_name *name, *next_name;
 	const char *env;
 	char *list, *env_name;
@@ -224,15 +228,18 @@ void load_drivers(void)
 		if ((env = getenv("RDMAV_DRIVERS"))) {
 			list = strdupa(env);
 			while ((env_name = strsep(&list, ":;")))
+				printf("LOAD DRIVER #1: Loading driver from RDMAV_DRIVERS: %s\n", env_name);
 				load_driver(env_name);
 		} else if ((env = getenv("IBV_DRIVERS"))) {
 			list = strdupa(env);
 			while ((env_name = strsep(&list, ":;")))
+				printf("LOAD DRIVER #2: Loading driver from IBV_DRIVERS: %s\n", env_name);
 				load_driver(env_name);
 		}
 	}
 
 	list_for_each_safe (&driver_name_list, name, next_name, entry) {
+		printf("LOAD DRIVER #3: Loading driver from config file: %s\n", name->name);
 		load_driver(name->name);
 		free(name->name);
 		free(name);
