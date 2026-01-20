@@ -503,6 +503,7 @@ static void print_raw_packet_caps(uint32_t raw_packet_caps)
 
 static int print_hca_cap(struct ibv_device *ib_dev, uint8_t ib_port)
 {
+	// printf("SCENIC IB: print_hca_cap - Entered function\n");
 	struct ibv_context *ctx;
 	struct ibv_device_attr_ex device_attr = {};
 	struct ibv_port_attr port_attr;
@@ -513,16 +514,19 @@ static int print_hca_cap(struct ibv_device *ib_dev, uint8_t ib_port)
 	ctx = ibv_open_device(ib_dev);
 	if (!ctx) {
 		fprintf(stderr, "Failed to open device\n");
+		printf("SCENIC IB: print_hca_cap - Failed to open device\n");
 		rc = 1;
 		goto cleanup;
 	}
 	if (ibv_query_device_ex(ctx, NULL, &device_attr)) {
 		fprintf(stderr, "Failed to query device props\n");
+		printf("SCENIC IB: print_hca_cap - Failed to query device props\n");
 		rc = 2;
 		goto cleanup;
 	}
 	if (ib_port && ib_port > device_attr.orig_attr.phys_port_cnt) {
 		fprintf(stderr, "Invalid port requested for device\n");
+		printf("SCENIC IB: print_hca_cap - Invalid port requested for device\n");
 		/* rc = 3 is taken by failure to clean up */
 		rc = 4;
 		goto cleanup;

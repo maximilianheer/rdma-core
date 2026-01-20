@@ -47,26 +47,68 @@
 // Stub operation for querying the device attributes 
 // TO BE IMPLEMENTED LATER
 static int scenic_ib_query_device_ex(struct ibv_context *ibv_ctx, const struct ibv_query_device_ex_input *input, struct ibv_device_attr_ex *device_attr, size_t attr_size) {
-    // For now, fill with dummy data to test the build 
-    struct ibv_device_attr *legacy_attr = &device_attr->orig_attr;
+    // Need to call ibv_cmd_query_device_any to get standard attributes first
+    struct ib_uverbs_ex_query_device_resp resp;
+    size_t resp_size = sizeof(resp);
+    int ret;
 
-    memset(device_attr, 0, attr_size);
-    legacy_attr->max_qp = 100;
-    legacy_attr->max_sge = 1;
-    legacy_attr->max_cq = 100;
-    legacy_attr->max_mr = 100;
-    legacy_attr->max_pd = 100;
+    ret = ibv_cmd_query_device_any(ibv_ctx, input, device_attr, attr_size, &resp, &resp_size);
+    if(ret) {
+        return ret;
+    }
     return 0; 
 }
 
-// Stub operation for querying the port attributes
-// TO BE IMPLEMENTED LATER
+// Operation that allows to query the kernel for port-related attributes 
 static int scenic_ib_query_port(struct ibv_context *ibv_ctx,
                                  uint8_t port_num,
                                  struct ibv_port_attr *port_attr) {
-    // For now, fill with dummy data to test the build 
-    memset(port_attr, 0, sizeof(*port_attr));
-    return 0; 
+    // Call the query_port function of the kernel driver 
+    struct ibv_query_port cmd;
+    return ibv_cmd_query_port(ibv_ctx, port_num, port_attr, &cmd, sizeof(cmd));
+}
+
+// Function to allocate a Protection Domain
+static struct ibv_pd *scenic_ib_alloc_pd(struct ibv_context *ibv_ctx) {
+    printf("SCENIC IB: scenic_ib_alloc_pd - Entered function\n");
+    struct scenic_ib_pd *spd; 
+    struct ibv_alloc_pd cmd;
+    struct userspace_cyt_rdma_alloc_pd_resp resp;
+    int ret; 
+
+    // Allocate memory for the scenic_ib_pd structure
+    spd = calloc(1, sizeof(*spd));
+    if(!spd) {
+        return NULL;
+    }
+
+    // Call the kernel to allocate the PD 
+    ret = ibv_cmd_alloc_pd(ibv_ctx, &spd->ibv_pd, &cmd, sizeof(cmd), &resp.ibv_resp, sizeof(resp));
+    printf("SCENIC IB: scenic_ib_alloc_pd - After ibv_cmd_alloc_pd, ret=%d\n", ret);
+    if(ret) {
+        free(spd);
+        return NULL;
+    }
+
+    // Save the PD number from the response in the scenic_ib_pd structure
+    spd->pdn = resp.pdn;
+
+    // Return the pointer to the embedded ibv_pd structure 
+    return &spd->ibv_pd;
+}
+
+// Function to deallocate a Protection Domain
+static int scenic_ib_dealloc_pd(struct ibv_pd *ibv_pd) {
+    int ret; 
+
+    ret = ibv_cmd_dealloc_pd(ibv_pd);
+    if(ret) {
+        return ret;
+    } 
+
+    // Free the memory we allocated for the scenic_ib_pd structure
+    free(to_scenic_ib_pd(ibv_pd));
+    return 0;
 }
 
 // Operations table for the SCENIC IB provider
@@ -74,6 +116,8 @@ static int scenic_ib_query_port(struct ibv_context *ibv_ctx,
 static const struct verbs_context_ops scenic_ib_ctx_ops = {
     .query_device_ex = scenic_ib_query_device_ex,
     .query_port   = scenic_ib_query_port,
+    .alloc_pd = scenic_ib_alloc_pd, 
+    .dealloc_pd = scenic_ib_dealloc_pd,
     // Other operations to be added later 
 };
 
@@ -81,20 +125,19 @@ static const struct verbs_context_ops scenic_ib_ctx_ops = {
 // Called when libibverbs finds a device matching scenic_ib
 static struct verbs_context *scenic_ib_alloc_context(struct ibv_device *ibv_dev, int cmd_fd, void *private_data) {
     // VERY LOUD PRINT STATEMENT FOR DEBUGGING PURPOSES
-    printf("SCENIC IB: Allocating context for device %s\n", ibv_dev->name);
+    // printf("SCENIC IB: scenic_ib_alloc_context - START %s\n", ibv_dev->name);
     
     // Infrastructure elements 
     struct scenic_ib_context *scenic_ctx;
     struct verbs_context *vctx;
     struct ibv_get_context cmd; 
-    struct ib_uverbs_get_context_resp resp;
-    struct cyt_rdma_alloc_ucontext_resp scenic_resp;
+    struct userspace_cyt_rdma_alloc_ucontext_resp resp;
 
     // Allocate memory for the scenic_ib_context structure
-    scenic_ctx = calloc(1, sizeof(*scenic_ctx));
-    if (!scenic_ctx) {
-        errno = ENOMEM;
-        return NULL;
+    scenic_ctx = NULL;
+    scenic_ctx = verbs_init_and_alloc_context(ibv_dev, cmd_fd, scenic_ctx, ibv_ctx, RDMA_DRIVER_UNKNOWN); 
+    if(!scenic_ctx) {
+        return NULL; 
     }
 
     vctx = &scenic_ctx->ibv_ctx;
@@ -102,21 +145,24 @@ static struct verbs_context *scenic_ib_alloc_context(struct ibv_device *ibv_dev,
     // Prepare the command structure 
     memset(&cmd, 0, sizeof(cmd));
     memset(&resp, 0, sizeof(resp));
-    memset(&scenic_resp, 0, sizeof(scenic_resp));
 
     cmd.response = (uintptr_t)&resp;
 
-    scenic_ctx = verbs_init_and_alloc_context(ibv_dev, cmd_fd, scenic_ctx, ibv_ctx, RDMA_DRIVER_UNKNOWN); 
+    // printf("SCENIC IB: scenic_ib_alloc_context - AFTER verbs_init_and_alloc_context\n");
 
-    if(ibv_cmd_get_context(vctx, &cmd, sizeof(cmd), NULL, &resp, sizeof(resp))) {
+    // printf("SCENIC IB: scenic_ib_alloc_context - Calling ibv_cmd_get_context\n");
+
+    if(ibv_cmd_get_context(&scenic_ctx->ibv_ctx, &cmd, sizeof(cmd), NULL, &resp.ibv_resp, sizeof(resp))) {
         // Failed to get context information from the kernel driver
         goto err_free; 
     }
 
-    // Assign ops to the wrapper
-    verbs_set_ops(vctx, &scenic_ib_ctx_ops);
+    // printf("SCENIC IB: scenic_ib_alloc_context - AFTER ibv_cmd_get_context\n");
 
-    return vctx;
+    // Assign ops to the wrapper
+    verbs_set_ops(&scenic_ctx->ibv_ctx, &scenic_ib_ctx_ops);
+
+    return &scenic_ctx->ibv_ctx;
     
     err_free: 
     free(scenic_ctx);
@@ -143,6 +189,7 @@ static void scenic_ib_uninit_device(struct verbs_device *verbs_device) {
 }
 
 static const struct verbs_match_ent scenic_match_table[] = {
+    { .kind = VERBS_MATCH_DRIVER_ID, .u.driver_id = "coyote_driver" },
     {
         .kind = VERBS_MATCH_PCI,
         .vendor = 0x10ee, // Your Vendor (e.g., Xilinx)
@@ -161,10 +208,11 @@ static const struct verbs_device_ops scenic_ib_device_ops = {
     .match_table = scenic_match_table,
 }; 
 
-static void __attribute__((constructor)) scenic_ib_register_driver(void) {
+/* static void __attribute__((constructor)) scenic_ib_register_driver(void) {
     // "myfpga" must match the string returned by your Kernel Driver's IB_DEVICE_NAME
+    printf("SCENIC IB: Registering scenic_ib driver\n");
     verbs_register_driver(&scenic_ib_device_ops);
-} 
+} */ 
 
 /* static const struct verbs_device_ops scenic_ib_device_ops = {
     .name = "scenic_ib",
@@ -183,4 +231,4 @@ static bool is_scenic_ib_dev(struct ibv_device *device) {
     return verbs_device->ops == &scenic_ib_device_ops;
 }
 
-// PROVIDER_DRIVER(scenic_ib, scenic_ib_device_ops);
+PROVIDER_DRIVER(scenic_ib, scenic_ib_device_ops);

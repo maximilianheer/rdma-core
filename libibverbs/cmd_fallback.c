@@ -85,12 +85,25 @@ enum write_fallback _execute_ioctl_fallback(struct ibv_context *ctx,
 					    struct ibv_command_buffer *cmdb,
 					    int *ret)
 {
+	// printf("SCENIC IB: _execute_ioctl_fallback - Entered function\n");
+	// printf("SCENIC IB: Called with arguments cmd_bit: %u\n", cmd_bit);
 	struct verbs_ex_private *priv = get_priv(ctx);
+	// printf("SCENIC IB: _execute_ioctl_fallback - Got priv\n");
+	if(!priv) {
+	    // printf("SCENIC IB: _execute_ioctl_fallback - priv is NULL\n");
+	} else {
+	    // printf("SCENIC IB: _execute_ioctl_fallback - priv is NOT NULL\n");
+	}
+	// printf("SCENIC IB: _execute_ioctl_fallback - priv: %u\n", priv->driver_id);
+	// printf("SCENIC IB: priv->unsupported_ioctls is %p\n", priv->unsupported_ioctls);
 
 	if (bitmap_test_bit(priv->unsupported_ioctls, cmd_bit))
+		// printf("SCENIC IB: _execute_ioctl_fallback - Bit is set in unsupported_ioctls\n");
 		return _check_legacy(cmdb, ret);
 
+	// printf("SCENIC IB: _execute_ioctl_fallback - Before execute_ioctl\n");
 	*ret = execute_ioctl(ctx, cmdb);
+	// printf("SCENIC IB: _execute_ioctl_fallback - After execute_ioctl, ret: %d\n", *ret);
 
 	if (likely(*ret == 0))
 		return SUCCESS;

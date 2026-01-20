@@ -142,6 +142,7 @@ static int cmd_get_context(struct verbs_context *context_ex,
 			   struct ibv_fd_arr *fds,
 			   struct ibv_command_buffer *link)
 {
+	// printf("SCENIC IB: cmd_get_context - Entered cmd_get_context\n");
 	DECLARE_FBCMD_BUFFER(cmdb, UVERBS_OBJECT_DEVICE,
 			     UVERBS_METHOD_GET_CONTEXT, 3, link);
 
@@ -151,6 +152,7 @@ static int cmd_get_context(struct verbs_context *context_ex,
 	uint32_t num_comp_vectors;
 	int ret;
 
+	// printf("SCENIC IB: cmd_get_context - Before filling attributes\n");
 	fill_attr_out_ptr(cmdb, UVERBS_ATTR_GET_CONTEXT_NUM_COMP_VECTORS,
 			  &num_comp_vectors);
 	fill_attr_out_ptr(cmdb, UVERBS_ATTR_GET_CONTEXT_CORE_SUPPORT,
@@ -160,15 +162,20 @@ static int cmd_get_context(struct verbs_context *context_ex,
 		fill_attr_in_ptr_array(cmdb, UVERBS_ATTR_GET_CONTEXT_FD_ARR,
 				       fds->arr, fds->count);
 
+	// printf("SCENIC IB: cmd_get_context - Before execute_ioctl_fallback\n");
+
 	/* Using free_context cmd_name as alloc context is not in
 	 * verbs_context_ops while free_context is and doesn't use ioctl
 	 */
 	switch (execute_ioctl_fallback(context, free_context, cmdb, &ret)) {
 	case TRY_WRITE: {
+		// printf("SCENIC IB: cmd_get_context - In TRY_WRITE case\n");
 		DECLARE_LEGACY_UHW_BUFS(link, IB_USER_VERBS_CMD_GET_CONTEXT);
 
 		ret = execute_write_bufs(context, IB_USER_VERBS_CMD_GET_CONTEXT,
 					 req, resp);
+		
+		// printf("SCENIC IB: cmd_get_context - After execute_write_bufs\n");
 		if (ret)
 			return ret;
 
@@ -178,13 +185,17 @@ static int cmd_get_context(struct verbs_context *context_ex,
 		return 0;
 	}
 	case SUCCESS:
+		// printf("SCENIC IB: cmd_get_context - In SUCCESS case\n");
 		break;
 	default:
+		// printf("SCENIC IB: cmd_get_context - In default case\n");
 		return ret;
 	};
 
 	context->num_comp_vectors = num_comp_vectors;
+	// printf("SCENIC IB: cmd_get_context - Before setting core_support\n");
 	verbs_device = verbs_get_device(context->device);
+	// printf("SCENIC IB: cmd_get_context - After getting verbs_device\n");
 	verbs_device->core_support = core_support;
 	return 0;
 }
@@ -198,8 +209,10 @@ int ibv_cmd_get_context(struct verbs_context *context_ex,
 	DECLARE_CMD_BUFFER_COMPAT(cmdb, UVERBS_OBJECT_DEVICE,
 				  UVERBS_METHOD_GET_CONTEXT, cmd, cmd_size,
 				  resp, resp_size);
-
+	
+	// printf("SCENIC IB: ibv_cmd_get_context - Calling cmd_get_context\n");
 	return cmd_get_context(context_ex, fd_arr, cmdb);
+	// printf("SCENIC IB: ibv_cmd_get_context - Returned from cmd_get_context\n");
 }
 
 int ibv_cmd_query_context(struct ibv_context *context,

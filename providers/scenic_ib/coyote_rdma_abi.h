@@ -53,4 +53,16 @@ struct cyt_rdma_alloc_ucontext_resp {
     uint64_t vfpga_wb_reg;
 }; 
 
+// Wrapper of the response structure for ibv_get_context, consisting of the standard response and the scenic-specific response
+struct userspace_cyt_rdma_alloc_ucontext_resp {
+    struct ib_uverbs_get_context_resp ibv_resp; 
+    struct cyt_rdma_alloc_ucontext_resp cyt_resp; 
+};
+
+// Response structure for ibv_alloc_pd
+struct userspace_cyt_rdma_alloc_pd_resp {
+    struct ib_uverbs_alloc_pd_resp ibv_resp;
+    uint32_t pdn;
+};
+
 #endif // COYOTE_RDMA_ABI_H 

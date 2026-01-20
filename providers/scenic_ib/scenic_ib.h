@@ -35,6 +35,19 @@
 #include <smmintrin.h>
 #include <immintrin.h>
 
+
+/* struct vfpga_ucontext {
+    // Underlying standard RDMA user context 
+    struct ib_ucontext ibucontext;
+
+    // Pointer to the vFPGA device associated with this user context
+    struct list_head qp_list; 
+    spinlock_t ctx_lock; 
+
+    // FPGA virtualization hook 
+    uint32_t hw_vmid; 
+}; */ 
+
 // Definition of the core struct that allows us to interact with the SCENIC and link to the standard ibv_context for RDMA verbs
 struct scenic_ib_context {
     struct verbs_context ibv_ctx;
@@ -64,9 +77,19 @@ struct scenic_ib_device {
 }; 
 
 // Helper Function to cast from ibv_device to a scenic_ib_device 
-static inline struct scenic_device *to_scenic_ib_device(struct ibv_device *ibvdev)
-{
+static inline struct scenic_ib_device *to_scenic_ib_device(struct ibv_device *ibvdev){
   return container_of(ibvdev, struct scenic_ib_device, verbs_dev.device);
+}
+
+// Structure to hold a protection domain 
+struct scenic_ib_pd {
+    struct ibv_pd ibv_pd; 
+    uint32_t pdn;  
+};
+
+// Helper to cast from ibv_pd to scenic_ib_pd
+static inline struct scenic_ib_pd *to_scenic_ib_pd(struct ibv_pd *ibv_pd) {
+    return container_of(ibv_pd, struct scenic_ib_pd, ibv_pd);
 }
 
 #endif // SCENIC_IB_H

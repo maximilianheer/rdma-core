@@ -618,6 +618,7 @@ const struct verbs_context_ops verbs_dummy_ops = {
 void verbs_set_ops(struct verbs_context *vctx,
 		   const struct verbs_context_ops *ops)
 {
+	// printf("SCENIC IB: verbs_set_ops - Entered function\n");
 	struct verbs_ex_private *priv = vctx->priv;
 	struct ibv_context_ops *ctx = &vctx->context.ops;
 
@@ -737,6 +738,7 @@ void verbs_set_ops(struct verbs_context *vctx,
 	SET_PRIV_OP_IC(vctx, unimport_dm);
 	SET_PRIV_OP_IC(vctx, unimport_mr);
 	SET_PRIV_OP_IC(vctx, unimport_pd);
+	// printf("SCENIC IB: verbs_set_ops - priv: %p\n", priv);
 
 #undef SET_OP
 #undef SET_OP2
