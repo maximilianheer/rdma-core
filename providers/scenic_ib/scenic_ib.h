@@ -34,6 +34,7 @@
 #include <x86intrin.h>
 #include <smmintrin.h>
 #include <immintrin.h>
+#include <stddef.h> /* for size_t, offsetof */
 
 
 /* struct vfpga_ucontext {
@@ -54,14 +55,14 @@ struct scenic_ib_context {
 
     // Custom fields for SCENIC IB -> Points of interaction as already done for the "original" Coyote cThread
 
-    // vFPGA config registers implemented with AVX, used for starting DMA commands 
-    volatile __m256i* vfpga_cnfg_reg_avx; 
+    // Lock for thread safety 
+    pthread_mutex_t scenic_lock;
 
-    // User-defined control registers, which can be parsed using axi_ctrl in the vFPGA 
-    volatile uint64_t *vfpga_ctrl_reg; 
+    // List of all active QPs in this context
+    struct list_head qp_list;
 
-    // Pointer to writeback region if enabled 
-    volatile uint32_t *vfpga_wb_reg;
+    // List of all active MRs in this context
+    struct list_head mr_list;    
 }; 
 
 // Helper Function to cast from ibv_context to scenic_ib_context
@@ -90,6 +91,26 @@ struct scenic_ib_pd {
 // Helper to cast from ibv_pd to scenic_ib_pd
 static inline struct scenic_ib_pd *to_scenic_ib_pd(struct ibv_pd *ibv_pd) {
     return container_of(ibv_pd, struct scenic_ib_pd, ibv_pd);
+}
+
+// Structure to hold a memory region
+struct scenic_ib_mr {
+    struct verbs_mr verbs_mr;
+
+    // Linkage in the list of MRs
+    struct list_node mr_list_node;
+
+    // Metadata that we later might need... 
+    uint64_t vaddr; 
+    uint64_t length;
+    uint32_t lkey;
+    uint32_t rkey;
+};
+
+// Helper to cast from ibv_mr to scenic_ib_mr  
+static inline struct scenic_ib_mr *to_scenic_ib_mr(struct ibv_mr *ibv_mr) {
+    struct verbs_mr *verbs_mr = container_of(ibv_mr, struct verbs_mr, ibv_mr);
+    return container_of(verbs_mr, struct scenic_ib_mr, verbs_mr);
 }
 
 #endif // SCENIC_IB_H

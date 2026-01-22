@@ -65,4 +65,11 @@ struct userspace_cyt_rdma_alloc_pd_resp {
     uint32_t pdn;
 };
 
+// Response structure for ibv_reg_mr
+struct userspace_cyt_rdma_reg_mr_resp {
+    struct ib_uverbs_reg_mr_resp ibv_resp;
+    uint32_t lkey;
+    uint32_t rkey;
+};
+
 #endif // COYOTE_RDMA_ABI_H 

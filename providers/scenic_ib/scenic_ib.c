@@ -70,7 +70,7 @@ static int scenic_ib_query_port(struct ibv_context *ibv_ctx,
 
 // Function to allocate a Protection Domain
 static struct ibv_pd *scenic_ib_alloc_pd(struct ibv_context *ibv_ctx) {
-    printf("SCENIC IB: scenic_ib_alloc_pd - Entered function\n");
+    // printf("SCENIC IB: scenic_ib_alloc_pd - Entered function\n");
     struct scenic_ib_pd *spd; 
     struct ibv_alloc_pd cmd;
     struct userspace_cyt_rdma_alloc_pd_resp resp;
@@ -84,7 +84,7 @@ static struct ibv_pd *scenic_ib_alloc_pd(struct ibv_context *ibv_ctx) {
 
     // Call the kernel to allocate the PD 
     ret = ibv_cmd_alloc_pd(ibv_ctx, &spd->ibv_pd, &cmd, sizeof(cmd), &resp.ibv_resp, sizeof(resp));
-    printf("SCENIC IB: scenic_ib_alloc_pd - After ibv_cmd_alloc_pd, ret=%d\n", ret);
+    // printf("SCENIC IB: scenic_ib_alloc_pd - After ibv_cmd_alloc_pd, ret=%d\n", ret);
     if(ret) {
         free(spd);
         return NULL;
@@ -111,6 +111,58 @@ static int scenic_ib_dealloc_pd(struct ibv_pd *ibv_pd) {
     return 0;
 }
 
+// Function to register a new memory region
+static struct ibv_mr *scenic_reg_mr(struct ibv_pd *ibv_pd, void *addr, size_t length, uint64_t hca_va, int access) {
+    // Check whether the provided addr is 64B-aligned 
+    if(((uintptr_t)addr % 64) != 0) {
+        errno = EINVAL;
+        return NULL; 
+    }
+
+    // Step 1: Define all the necessary variables
+    struct scenic_ib_context *scenic_ctx = to_scenic_ib_context(ibv_pd->context);
+    struct scenic_ib_mr *mr; 
+    struct ibv_reg_mr cmd;
+    struct ib_uverbs_reg_mr_resp resp;
+    int ret;
+
+    // Step 2: Allocate memory for the scenic_ib_mr structure
+    mr = calloc(1, sizeof(*mr));
+    if(!mr) {
+        return NULL;
+    }   
+
+    // Step 3: Talk to the kernel to register the memory region 
+    ret = ibv_cmd_reg_mr(ibv_pd, addr, length, (uintptr_t)addr, access, &mr->verbs_mr, &cmd, sizeof(cmd), &resp, sizeof(resp));
+    if(ret) {
+        return NULL;
+    }
+
+    // Step 3: Populate the metadata fields in the scenic_ib_mr structure
+    mr->vaddr = (uint64_t)(uintptr_t)addr;
+    mr->length = (uint64_t)length;
+    mr->lkey = resp.lkey; 
+    mr->rkey = resp.rkey; 
+
+    // Step 4: Store the scenic_ib_mr structure in the local list of MRs
+    pthread_mutex_lock(&scenic_ctx->scenic_lock);
+    list_add_tail(&scenic_ctx->mr_list, &mr->mr_list_node);
+    pthread_mutex_unlock(&scenic_ctx->scenic_lock);
+
+    // Step 5: Mutual cross-check with all registered QPs / cthreads: Every QP must be aware of this MR
+    
+    // Iterate over all QPs stored in the lis        
+
+    // To be implemented later 
+    return &mr->verbs_mr.ibv_mr; 
+}
+
+// Function to deregister a memory region
+static int scenic_dereg_mr(struct verbs_mr *vmr) {
+    // To be implemented later
+    return 0;
+}
+
 // Operations table for the SCENIC IB provider
 // Link scenic_ib stub implementations to the verbs interface 
 static const struct verbs_context_ops scenic_ib_ctx_ops = {
@@ -119,6 +171,9 @@ static const struct verbs_context_ops scenic_ib_ctx_ops = {
     .alloc_pd = scenic_ib_alloc_pd, 
     .dealloc_pd = scenic_ib_dealloc_pd,
     // Other operations to be added later 
+    
+    .reg_mr = scenic_reg_mr,
+    .dereg_mr = scenic_dereg_mr
 };
 
 // ALLOC CONTEXT Function 
@@ -159,6 +214,11 @@ static struct verbs_context *scenic_ib_alloc_context(struct ibv_device *ibv_dev,
 
     // printf("SCENIC IB: scenic_ib_alloc_context - AFTER ibv_cmd_get_context\n");
 
+    // Initialize custom fields in scenic_ib_context
+    pthread_mutex_init(&scenic_ctx->scenic_lock, NULL);
+    list_head_init(&scenic_ctx->qp_list);
+    list_head_init(&scenic_ctx->mr_list);
+
     // Assign ops to the wrapper
     verbs_set_ops(&scenic_ctx->ibv_ctx, &scenic_ib_ctx_ops);
 
@@ -197,6 +257,7 @@ static const struct verbs_match_ent scenic_match_table[] = {
     },
     { .kind = VERBS_MATCH_SENTINEL },
 };
+
 
 static const struct verbs_device_ops scenic_ib_device_ops = {
     .name = "coyote_driver", 
