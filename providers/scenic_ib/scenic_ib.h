@@ -31,6 +31,7 @@
 #include <stdio.h>
 #include <infiniband/verbs.h>
 #include <infiniband/driver.h>
+#include "cthread_bridge.h"
 #include <x86intrin.h>
 #include <smmintrin.h>
 #include <immintrin.h>
@@ -131,6 +132,21 @@ struct scenic_ib_cq {
 static inline struct scenic_ib_cq *to_scenic_ib_cq(struct ibv_cq *ibv_cq) {
     return container_of(ibv_cq, struct scenic_ib_cq, ibv_cq);
 }   
+
+// Structure to hold a Queue Pair
+struct scenic_ib_qp {
+    struct ibv_qp ibv_qp;
+    struct list_node qp_list_node;
+    uint32_t qpn;
+
+    // cThread as the Coyote-FPGA abstraction
+    struct cthread_handle *cthread;
+};
+
+// Helper to cast from ibv_qp to scenic_ib_qp
+static inline struct scenic_ib_qp *to_scenic_ib_qp(struct ibv_qp *ibv_qp) {
+    return container_of(ibv_qp, struct scenic_ib_qp, ibv_qp);
+}
 
 #endif // SCENIC_IB_H
 

@@ -156,10 +156,21 @@ static struct ibv_mr *scenic_reg_mr(struct ibv_pd *ibv_pd, void *addr, size_t le
     printf("SCENIC IB: scenic_reg_mr - Added MR to mr_list\n");
 
     // Step 5: Mutual cross-check with all registered QPs / cthreads: Every QP must be aware of this MR
-    
-    // Iterate over all QPs stored in the lis        
+    // Iterate over all QPs and map this MR to their cthreads
+    pthread_mutex_lock(&scenic_ctx->scenic_lock);
+    struct scenic_ib_qp *qp;
+    list_for_each(&scenic_ctx->qp_list, qp, qp_list_node) {
+        if (qp->cthread) {
+            int map_ret = cthread_user_map(qp->cthread, (void *)mr->vaddr, (uint32_t)mr->length);
+            if (map_ret) {
+                printf("SCENIC IB: scenic_reg_mr - cthread_user_map failed for QP %u with ret=%d\n", qp->qpn, map_ret);
+            } else {
+                printf("SCENIC IB: scenic_reg_mr - Mapped MR to QP %u cthread\n", qp->qpn);
+            }
+        }
+    }
+    pthread_mutex_unlock(&scenic_ctx->scenic_lock);
 
-    // To be implemented later 
     return &mr->verbs_mr.ibv_mr; 
 }
 
@@ -169,12 +180,23 @@ static int scenic_dereg_mr(struct verbs_mr *vmr) {
     struct scenic_ib_context *scenic_ctx = to_scenic_ib_context(vmr->ibv_mr.context);
     int ret;
 
-    // Step 1: Remove the MR from the local list of MRs
+    // Step 1: Remove the MR from the local list of MRs and unmap from all QPs
     pthread_mutex_lock(&scenic_ctx->scenic_lock);
     list_del(&mr->mr_list_node);
-    pthread_mutex_unlock(&scenic_ctx->scenic_lock);
 
-    // LATER: Go over all QPs and unmap this MR from their address spaces
+    // Iterate over all QPs and unmap this MR from their cthreads
+    struct scenic_ib_qp *qp;
+    list_for_each(&scenic_ctx->qp_list, qp, qp_list_node) {
+        if (qp->cthread) {
+            int unmap_ret = cthread_user_unmap(qp->cthread, (void *)mr->vaddr);
+            if (unmap_ret) {
+                printf("SCENIC IB: scenic_dereg_mr - cthread_user_unmap failed for QP %u with ret=%d\n", qp->qpn, unmap_ret);
+            } else {
+                printf("SCENIC IB: scenic_dereg_mr - Unmapped MR from QP %u cthread\n", qp->qpn);
+            }
+        }
+    }
+    pthread_mutex_unlock(&scenic_ctx->scenic_lock);
 
     // Step 2: Call the kernel to deregister the MR
     ret = ibv_cmd_dereg_mr(vmr);
@@ -256,6 +278,30 @@ static int scenic_ib_poll_cq(struct ibv_cq *ibv_cq, int num_entries, struct ibv_
     // To be implemented later
     return 0;
 }
+
+// Function to create a queue pair for RDMA
+static int scenic_ib_create_qp(struct ibv_qp *ibv_qp, struct ibv_qp_init_attr *attr) {
+    // To be implemented later
+    return 0;
+}
+
+// Function to destroy a queue pair for RDMA
+static int scenic_ib_destroy_qp(struct ibv_qp *ibv_qp) {
+    // To be implemented later
+    return 0;
+}
+
+// Function to modify a queue pair for RDMA
+static int scenic_ib_modify_qp(struct ibv_qp *ibv_qp, struct ibv_qp_attr *attr, int attr_mask) {
+    // To be implemented later
+    return 0;
+}   
+
+// Function to post send work requests to a queue pair
+static int scenic_ib_post_send(struct ibv_qp *ibv_qp, struct ibv_send_wr *wr, struct ibv_send_wr **bad_wr) {
+    // To be implemented later
+    return 0;
+}   
 
 // Operations table for the SCENIC IB provider
 // Link scenic_ib stub implementations to the verbs interface 
