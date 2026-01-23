@@ -72,4 +72,10 @@ struct userspace_cyt_rdma_reg_mr_resp {
     uint32_t rkey;
 };
 
+// Response structure for ibv_create_cq
+struct userspace_cyt_rdma_create_cq_resp {
+    struct ib_uverbs_create_cq_resp ibv_resp;
+    uint32_t cqn;
+};
+
 #endif // COYOTE_RDMA_ABI_H 

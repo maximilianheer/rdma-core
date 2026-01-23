@@ -63,6 +63,9 @@ struct scenic_ib_context {
 
     // List of all active MRs in this context
     struct list_head mr_list;    
+
+    // List of all active CQs in this context
+    struct list_head cq_list;
 }; 
 
 // Helper Function to cast from ibv_context to scenic_ib_context
@@ -71,7 +74,7 @@ static inline struct scenic_ib_context *to_scenic_ib_context(struct ibv_context 
     return container_of(vctx, struct scenic_ib_context, ibv_ctx);
 }
 
-// Definitionof the core struct for a scenic_device 
+// Definition of the core struct for a scenic_device 
 struct scenic_ib_device {
   struct verbs_device verbs_dev; 
   int driver_abi_ver; 
@@ -112,6 +115,22 @@ static inline struct scenic_ib_mr *to_scenic_ib_mr(struct ibv_mr *ibv_mr) {
     struct verbs_mr *verbs_mr = container_of(ibv_mr, struct verbs_mr, ibv_mr);
     return container_of(verbs_mr, struct scenic_ib_mr, verbs_mr);
 }
+
+// Structure to hold a Completion Queue
+struct scenic_ib_cq {
+    struct ibv_cq ibv_cq; 
+
+    // Linkage in the list of CQs
+    struct list_node cq_list_node;
+
+    // Store the CQ number
+    uint32_t cqn;
+};
+
+// Helper to cast from ibv_cq to scenic_ib_cq
+static inline struct scenic_ib_cq *to_scenic_ib_cq(struct ibv_cq *ibv_cq) {
+    return container_of(ibv_cq, struct scenic_ib_cq, ibv_cq);
+}   
 
 #endif // SCENIC_IB_H
 

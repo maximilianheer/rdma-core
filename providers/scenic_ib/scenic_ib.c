@@ -113,6 +113,7 @@ static int scenic_ib_dealloc_pd(struct ibv_pd *ibv_pd) {
 
 // Function to register a new memory region
 static struct ibv_mr *scenic_reg_mr(struct ibv_pd *ibv_pd, void *addr, size_t length, uint64_t hca_va, int access) {
+    printf("SCENIC IB: scenic_reg_mr - Entered function\n");
     // Check whether the provided addr is 64B-aligned 
     if(((uintptr_t)addr % 64) != 0) {
         errno = EINVAL;
@@ -123,18 +124,21 @@ static struct ibv_mr *scenic_reg_mr(struct ibv_pd *ibv_pd, void *addr, size_t le
     struct scenic_ib_context *scenic_ctx = to_scenic_ib_context(ibv_pd->context);
     struct scenic_ib_mr *mr; 
     struct ibv_reg_mr cmd;
-    struct ib_uverbs_reg_mr_resp resp;
+    struct userspace_cyt_rdma_reg_mr_resp resp;
     int ret;
 
     // Step 2: Allocate memory for the scenic_ib_mr structure
     mr = calloc(1, sizeof(*mr));
     if(!mr) {
+        printf("SCENIC IB: scenic_reg_mr - calloc failed\n");
         return NULL;
     }   
 
     // Step 3: Talk to the kernel to register the memory region 
-    ret = ibv_cmd_reg_mr(ibv_pd, addr, length, (uintptr_t)addr, access, &mr->verbs_mr, &cmd, sizeof(cmd), &resp, sizeof(resp));
+    printf("SCENIC IB: scenic_reg_mr - Calling ibv_cmd_reg_mr\n");
+    ret = ibv_cmd_reg_mr(ibv_pd, addr, length, (uintptr_t)addr, access, &mr->verbs_mr, &cmd, sizeof(cmd), &resp.ibv_resp, sizeof(resp));
     if(ret) {
+        printf("SCENIC IB: scenic_reg_mr - ibv_cmd_reg_mr failed with ret=%d\n", ret);
         return NULL;
     }
 
@@ -143,11 +147,13 @@ static struct ibv_mr *scenic_reg_mr(struct ibv_pd *ibv_pd, void *addr, size_t le
     mr->length = (uint64_t)length;
     mr->lkey = resp.lkey; 
     mr->rkey = resp.rkey; 
+    printf("SCENIC IB: scenic_reg_mr - Registered MR: vaddr=0x%lx, length=%lu, lkey=0x%x, rkey=0x%x\n", mr->vaddr, mr->length, mr->lkey, mr->rkey);
 
     // Step 4: Store the scenic_ib_mr structure in the local list of MRs
     pthread_mutex_lock(&scenic_ctx->scenic_lock);
     list_add_tail(&scenic_ctx->mr_list, &mr->mr_list_node);
     pthread_mutex_unlock(&scenic_ctx->scenic_lock);
+    printf("SCENIC IB: scenic_reg_mr - Added MR to mr_list\n");
 
     // Step 5: Mutual cross-check with all registered QPs / cthreads: Every QP must be aware of this MR
     
@@ -159,6 +165,94 @@ static struct ibv_mr *scenic_reg_mr(struct ibv_pd *ibv_pd, void *addr, size_t le
 
 // Function to deregister a memory region
 static int scenic_dereg_mr(struct verbs_mr *vmr) {
+    struct scenic_ib_mr *mr = to_scenic_ib_mr(&vmr->ibv_mr);
+    struct scenic_ib_context *scenic_ctx = to_scenic_ib_context(vmr->ibv_mr.context);
+    int ret;
+
+    // Step 1: Remove the MR from the local list of MRs
+    pthread_mutex_lock(&scenic_ctx->scenic_lock);
+    list_del(&mr->mr_list_node);
+    pthread_mutex_unlock(&scenic_ctx->scenic_lock);
+
+    // LATER: Go over all QPs and unmap this MR from their address spaces
+
+    // Step 2: Call the kernel to deregister the MR
+    ret = ibv_cmd_dereg_mr(vmr);
+    if(ret) {
+        return ret;
+    }
+
+    // Step 3: Free the memory allocated for the scenic_ib_mr structure
+    free(mr);
+    return 0;
+}
+
+// Function to create a CQ 
+static struct ibv_cq *scenic_ib_create_cq(struct ibv_context *ibv_ctx, int cqe, struct ibv_comp_channel *channel, int comp_vector) {
+    printf("SCENIC IB: scenic_ib_create_cq - Entered function\n");
+    printf("SCENIC IB: scenic_ib_create_cq - cqe=%d, channel=%p, comp_vector=%d\n", cqe, channel, comp_vector);
+    struct scenic_ib_cq *scenic_cq;
+    struct ibv_create_cq cmd;
+    struct userspace_cyt_rdma_create_cq_resp resp;
+    int ret; 
+
+    // Step 1: Allocate memory for the scenic_ib_cq structure
+    scenic_cq = calloc(1, sizeof(*scenic_cq));
+    if(!scenic_cq) {
+        return NULL;
+    }  
+    printf("SCENIC IB: scenic_ib_create_cq - After calloc\n");
+
+    // Step 2: Call the kernel to create the CQ
+    ret = ibv_cmd_create_cq(ibv_ctx, cqe, channel, comp_vector, &scenic_cq->ibv_cq, &cmd, sizeof(cmd), &resp.ibv_resp, sizeof(resp));
+    if(ret) {
+        printf("SCENIC IB: scenic_ib_create_cq - ibv_cmd_create_cq failed with ret=%d\n", ret);
+        free(scenic_cq);
+        return NULL;   
+    }  
+
+    // Step 3: Store the CQ number
+    printf("SCENIC IB: scenic_ib_create_cq - After ibv_cmd_create_cq\n");
+    scenic_cq->cqn = resp.cqn;
+
+    // Step 4: Store the scenic_ib_cq structure in the local list of CQs
+    struct scenic_ib_context *scenic_ctx = to_scenic_ib_context(ibv_ctx);
+    printf("SCENIC IB: scenic_ib_create_cq - Before adding to cq_list\n");
+    pthread_mutex_lock(&scenic_ctx->scenic_lock);
+    printf("SCENIC IB: scenic_ib_create_cq - Adding CQ with cqn=%u to cq_list\n", scenic_cq->cqn);
+    list_add_tail(&scenic_ctx->cq_list, &scenic_cq->cq_list_node);
+    printf("SCENIC IB: scenic_ib_create_cq - Added CQ to cq_list\n");
+    pthread_mutex_unlock(&scenic_ctx->scenic_lock);
+    printf("SCENIC IB: scenic_ib_create_cq - After adding to cq_list\n");
+
+    // Step 4: Return the pointer to the embedded ibv_cq structure
+    return &scenic_cq->ibv_cq;
+}
+
+// Function to destroy a CQ
+static int scenic_ib_destroy_cq(struct ibv_cq *ibv_cq) {
+    struct scenic_ib_cq *scenic_cq = to_scenic_ib_cq(ibv_cq);
+    struct scenic_ib_context *scenic_ctx = to_scenic_ib_context(ibv_cq->context);
+    int ret;    
+
+    // Step 1: Remove the CQ from the local list of CQs
+    pthread_mutex_lock(&scenic_ctx->scenic_lock);
+    list_del(&scenic_cq->cq_list_node);
+    pthread_mutex_unlock(&scenic_ctx->scenic_lock);
+
+    // Step 2: Call the kernel to destroy the CQ
+    ret = ibv_cmd_destroy_cq(ibv_cq);
+    if(ret) {
+        return ret;
+    }
+
+    // Step 3: Free the memory allocated for the scenic_ib_cq structure
+    free(scenic_cq);
+    return 0;
+}
+
+// Function to poll a CQ 
+static int scenic_ib_poll_cq(struct ibv_cq *ibv_cq, int num_entries, struct ibv_wc *wc) {
     // To be implemented later
     return 0;
 }
@@ -173,7 +267,11 @@ static const struct verbs_context_ops scenic_ib_ctx_ops = {
     // Other operations to be added later 
     
     .reg_mr = scenic_reg_mr,
-    .dereg_mr = scenic_dereg_mr
+    .dereg_mr = scenic_dereg_mr,
+
+    .create_cq = scenic_ib_create_cq,
+    .destroy_cq = scenic_ib_destroy_cq,
+    .poll_cq = scenic_ib_poll_cq,
 };
 
 // ALLOC CONTEXT Function 
@@ -218,6 +316,7 @@ static struct verbs_context *scenic_ib_alloc_context(struct ibv_device *ibv_dev,
     pthread_mutex_init(&scenic_ctx->scenic_lock, NULL);
     list_head_init(&scenic_ctx->qp_list);
     list_head_init(&scenic_ctx->mr_list);
+    list_head_init(&scenic_ctx->cq_list);
 
     // Assign ops to the wrapper
     verbs_set_ops(&scenic_ctx->ibv_ctx, &scenic_ib_ctx_ops);
