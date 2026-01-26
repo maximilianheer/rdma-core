@@ -295,6 +295,42 @@ extern "C" void cthread_close_conn(cthread_t ct) {
     }
 }
 
+extern "C" void cthread_write_qp_context(cthread_t ct, uint32_t port) {
+    if (ct && ct->thread) {
+        ct->thread->writeQpContext(port);
+    }
+}
+
+extern "C" void cthread_arp_lookup(cthread_t ct, uint32_t ip_addr) {
+    if (ct && ct->thread) {
+        ct->thread->doArpLookup(ip_addr);
+    }
+}
+
+extern "C" void cthread_set_local_qp(cthread_t ct, uint32_t qpn, uint32_t rkey, uint32_t psn, uint32_t ip_addr) {
+    if (ct && ct->thread) {
+        ct->thread->setLocalQp(qpn, rkey, psn, ip_addr);
+    }
+}
+
+extern "C" void cthread_set_remote_qp(cthread_t ct, uint32_t qpn, uint32_t rkey, uint32_t psn, uint32_t ip_addr) {
+    if (ct && ct->thread) {
+        ct->thread->setRemoteQp(qpn, rkey, psn, ip_addr);
+    }
+}
+
+extern "C" void cthread_set_remote_rkey(cthread_t ct, uint32_t rkey) {
+    if (ct && ct->thread) {
+        ct->thread->setRemoteRkey(rkey);
+    }
+}
+
+extern "C" void cthread_set_local_psn(cthread_t ct, uint32_t psn) {
+    if (ct && ct->thread) {
+        ct->thread->setLocalPSN(psn);
+    }
+}
+
 /* ============================================
  * Locking functions
  * ============================================ */
@@ -349,23 +385,37 @@ extern "C" int cthread_get_fpga_cnfg(cthread_t ct, cyt_fpga_cnfg_t *cnfg) {
 extern "C" int cthread_get_local_qp(cthread_t ct, cyt_ibv_q_t *q) {
     if (!ct || !ct->thread || !q) return -1;
 
-    /* Note: qpair is protected, so accessing it requires either:
-     * 1. Making it public
-     * 2. Adding a public getter to cThread
-     * For now, return -1
-     */
-    return -1;
+    q->ip_addr = ct->thread->getLocalQpInfo().ip_addr;
+    q->qpn = ct->thread->getLocalQpInfo().qpn;
+    q->psn = ct->thread->getLocalQpInfo().psn;
+    q->rkey = ct->thread->getLocalQpInfo().rkey;
+    q->vaddr = ct->thread->getLocalQpInfo().vaddr;
+    q->size = ct->thread->getLocalQpInfo().size;
+    std::memcpy(q->gid, ct->thread->getLocalQpInfo().gid, 33);
+    return 0;
 }
+
+extern "C" int cthread_get_local_qpn(cthread_t ct) {
+    if (!ct || !ct->thread) return -1;
+    return ct->thread->getLocalQpInfo().qpn;
+}  
 
 extern "C" int cthread_get_remote_qp(cthread_t ct, cyt_ibv_q_t *q) {
     if (!ct || !ct->thread || !q) return -1;
 
-    /* Note: qpair is protected, so accessing it requires either:
-     * 1. Making it public
-     * 2. Adding a public getter to cThread
-     * For now, return -1
-     */
-    return -1;
+    q->ip_addr = ct->thread->getRemoteQpInfo().ip_addr;
+    q->qpn = ct->thread->getRemoteQpInfo().qpn;
+    q->psn = ct->thread->getRemoteQpInfo().psn;
+    q->rkey = ct->thread->getRemoteQpInfo().rkey;
+    q->vaddr = ct->thread->getRemoteQpInfo().vaddr;
+    q->size = ct->thread->getRemoteQpInfo().size;
+    std::memcpy(q->gid, ct->thread->getRemoteQpInfo().gid, 33); 
+    return 0;
+}
+
+extern "C" int cthread_get_remote_qpn(cthread_t ct) {
+    if (!ct || !ct->thread) return -1;
+    return ct->thread->getRemoteQpInfo().qpn;
 }
 
 /* ============================================

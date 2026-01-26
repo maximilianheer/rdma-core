@@ -78,4 +78,10 @@ struct userspace_cyt_rdma_create_cq_resp {
     uint32_t cqn;
 };
 
+// Custom command structure for ibv_create_qp
+struct userspace_cyt_rdma_create_qp_cmd {
+    struct ibv_create_qp cmd;
+    uint32_t qpn; 
+};
+
 #endif // COYOTE_RDMA_ABI_H 

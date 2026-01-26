@@ -163,9 +163,9 @@ static struct ibv_mr *scenic_reg_mr(struct ibv_pd *ibv_pd, void *addr, size_t le
         if (qp->cthread) {
             int map_ret = cthread_user_map(qp->cthread, (void *)mr->vaddr, (uint32_t)mr->length);
             if (map_ret) {
-                printf("SCENIC IB: scenic_reg_mr - cthread_user_map failed for QP %u with ret=%d\n", qp->qpn, map_ret);
+                printf("SCENIC IB: scenic_reg_mr - cthread_user_map failed for QP %u with ret=%d\n", qp->local_qpn, map_ret);
             } else {
-                printf("SCENIC IB: scenic_reg_mr - Mapped MR to QP %u cthread\n", qp->qpn);
+                printf("SCENIC IB: scenic_reg_mr - Mapped MR to QP %u cthread\n", qp->local_qpn);
             }
         }
     }
@@ -190,9 +190,9 @@ static int scenic_dereg_mr(struct verbs_mr *vmr) {
         if (qp->cthread) {
             int unmap_ret = cthread_user_unmap(qp->cthread, (void *)mr->vaddr);
             if (unmap_ret) {
-                printf("SCENIC IB: scenic_dereg_mr - cthread_user_unmap failed for QP %u with ret=%d\n", qp->qpn, unmap_ret);
+                printf("SCENIC IB: scenic_dereg_mr - cthread_user_unmap failed for QP %u with ret=%d\n", qp->local_qpn, unmap_ret);
             } else {
-                printf("SCENIC IB: scenic_dereg_mr - Unmapped MR from QP %u cthread\n", qp->qpn);
+                printf("SCENIC IB: scenic_dereg_mr - Unmapped MR from QP %u cthread\n", qp->local_qpn);
             }
         }
     }
@@ -237,6 +237,10 @@ static struct ibv_cq *scenic_ib_create_cq(struct ibv_context *ibv_ctx, int cqe, 
     printf("SCENIC IB: scenic_ib_create_cq - After ibv_cmd_create_cq\n");
     scenic_cq->cqn = resp.cqn;
 
+    // Initialize the qp_list head
+    list_head_init(&scenic_cq->qp_send_list);
+    list_head_init(&scenic_cq->qp_recv_list);
+
     // Step 4: Store the scenic_ib_cq structure in the local list of CQs
     struct scenic_ib_context *scenic_ctx = to_scenic_ib_context(ibv_ctx);
     printf("SCENIC IB: scenic_ib_create_cq - Before adding to cq_list\n");
@@ -280,19 +284,181 @@ static int scenic_ib_poll_cq(struct ibv_cq *ibv_cq, int num_entries, struct ibv_
 }
 
 // Function to create a queue pair for RDMA
-static int scenic_ib_create_qp(struct ibv_qp *ibv_qp, struct ibv_qp_init_attr *attr) {
-    // To be implemented later
-    return 0;
+static struct ibv_qp *scenic_ib_create_qp(struct ibv_pd *pd, struct ibv_qp_init_attr *attr) {
+    // Step 1: Create all the necessary structures and variables
+    printf("SCENIC IB: scenic_ib_create_qp - Entered function\n");
+    struct scenic_ib_context *scenic_ctx = to_scenic_ib_context(pd->context);
+    struct scenic_ib_qp *scenic_qp;
+    struct userspace_cyt_rdma_create_qp_cmd cmd;
+    struct ib_uverbs_create_qp_resp resp;
+    uint32_t qpn;
+    int ret;
+
+    // Step 2: Allocate memory for the scenic_ib_qp structure, create a cthread and attach it 
+    scenic_qp = calloc(1, sizeof(*scenic_qp));
+    scenic_qp->cthread = cthread_create(1, getpid(), 0, NULL); 
+    qpn = cthread_get_local_qpn(scenic_qp->cthread);
+
+    // Step 3: Add the scenic_ib_qp structure to the local list of QPs in the context and for the specified CQ 
+    pthread_mutex_lock(&scenic_ctx->scenic_lock);
+    scenic_qp->local_qpn = qpn;
+    list_add_tail(&scenic_ctx->qp_list, &scenic_qp->qp_list_node);
+    pthread_mutex_unlock(&scenic_ctx->scenic_lock);
+    
+    // Step 4: Iterate over the list of CQs to find the associated send and recv CQs and link the QP to them
+    //Iterate over all CQs in the context
+    pthread_mutex_lock(&scenic_ctx->scenic_lock);
+    struct scenic_ib_cq *scenic_send_cq = to_scenic_ib_cq(attr->send_cq);
+    struct scenic_ib_cq *scenic_recv_cq = to_scenic_ib_cq(attr->recv_cq);
+
+    // Link the QP to the send CQ
+    list_add_tail(&scenic_send_cq->qp_send_list, &scenic_qp->qp_list_node);
+    printf("SCENIC IB: scenic_ib_create_qp - Linked QP %u to send CQ %u\n", qpn, scenic_send_cq->cqn);
+    // Link the QP to the recv CQ
+    list_add_tail(&scenic_recv_cq->qp_recv_list, &scenic_qp->qp_list_node);
+    printf("SCENIC IB: scenic_ib_create_qp - Linked QP %u to recv CQ %u\n", qpn, scenic_recv_cq->cqn);
+    pthread_mutex_unlock(&scenic_ctx->scenic_lock);
+
+    // Step 5: Register all existing MRs with the cthread
+    pthread_mutex_lock(&scenic_ctx->scenic_lock);
+    struct scenic_ib_mr *mr;
+    list_for_each(&scenic_ctx->mr_list, mr, mr_list_node) {
+        int map_ret = cthread_user_map(scenic_qp->cthread, (void *)mr->vaddr, (uint32_t)mr->length);
+        if (map_ret) {
+            printf("SCENIC IB: scenic_ib_create_qp - cthread_user_map failed for MR vaddr=0x%lx with ret=%d\n", mr->vaddr, map_ret);
+        } else {
+            printf("SCENIC IB: scenic_ib_create_qp - Mapped MR vaddr=0x%lx to QP %u cthread\n", mr->vaddr, qpn);
+        }
+    }
+    pthread_mutex_unlock(&scenic_ctx->scenic_lock); 
+
+    // Step 6: Call the kernel to create the QP 
+    cmd.qpn = qpn;
+    ret = ibv_cmd_create_qp(pd, &scenic_qp->ibv_qp, attr, &cmd.cmd, sizeof(cmd), &resp, sizeof(resp));
+    if(ret) {
+        printf("SCENIC IB: scenic_ib_create_qp - ibv_cmd_create_qp failed with ret=%d\n", ret);
+        // Clean up allocated resources
+        cthread_destroy(scenic_qp->cthread);
+
+        // Remove the QP from the local list of QPs
+        pthread_mutex_lock(&scenic_ctx->scenic_lock);
+        list_del(&scenic_qp->qp_list_node);
+        pthread_mutex_unlock(&scenic_ctx->scenic_lock);
+        free(scenic_qp);
+    }
+    printf("SCENIC IB: scenic_ib_create_qp - Created QP with qpn=%u\n", qpn);
+
+    return &scenic_qp->ibv_qp;
 }
 
 // Function to destroy a queue pair for RDMA
 static int scenic_ib_destroy_qp(struct ibv_qp *ibv_qp) {
-    // To be implemented later
+    printf("SCENIC IB: scenic_ib_destroy_qp - Entered function\n");
+
+    // Step 1: Get the scenic_ib_qp and scenic_ib_context structures
+    struct scenic_ib_qp *scenic_qp = to_scenic_ib_qp(ibv_qp);
+    struct scenic_ib_context *scenic_ctx = to_scenic_ib_context(ibv_qp->context);
+    int ret;    
+    printf("SCENIC IB: scenic_ib_destroy_qp - QP qpn=%u\n", scenic_qp->local_qpn);
+
+    // Step 2: Remove the QP from the local list of QPs in the context and from the associated CQs
+    pthread_mutex_lock(&scenic_ctx->scenic_lock);
+    list_del(&scenic_qp->qp_list_node);
+    pthread_mutex_unlock(&scenic_ctx->scenic_lock);
+    printf("SCENIC IB: scenic_ib_destroy_qp - Removed QP from qp_list\n");
+
+    // Step 3: Destroy the associated cthread
+    cthread_destroy(scenic_qp->cthread);
+    printf("SCENIC IB: scenic_ib_destroy_qp - Destroyed cthread\n");
+
+    // Step 4: Call the kernel to destroy the QP
+    ret = ibv_cmd_destroy_qp(ibv_qp);
+    if(ret) {
+        printf("SCENIC IB: scenic_ib_destroy_qp - ibv_cmd_destroy_qp failed with ret=%d\n", ret);
+        return ret;
+    }
+
+    // Step 5: Free the memory allocated for the scenic_ib_qp structure
+    free(scenic_qp);
+
     return 0;
+}
+
+uint32_t extract_ipv4_from_gid(union ibv_gid *gid) {
+    uint32_t ipv4_network_order;
+    
+    // Copy the last 4 bytes (Offset 12)
+    memcpy(&ipv4_network_order, &gid->raw[12], sizeof(uint32_t));
+
+    return ipv4_network_order;
 }
 
 // Function to modify a queue pair for RDMA
 static int scenic_ib_modify_qp(struct ibv_qp *ibv_qp, struct ibv_qp_attr *attr, int attr_mask) {
+    printf("SCENIC IB: scenic_ib_modify_qp - Entered function\n");
+
+    // Step 1: Get the required structs
+    struct scenic_ib_qp *scenic_qp = to_scenic_ib_qp(ibv_qp);
+    struct scenic_ib_context *scenic_ctx = to_scenic_ib_context(ibv_qp->context);
+    struct ibv_modify_qp cmd; 
+    int ret; 
+
+    memset(&cmd, 0, sizeof(cmd));
+
+    // Step 1: Call the kernel to validate the state modification 
+    ret = ibv_cmd_modify_qp(ibv_qp, attr, attr_mask, &cmd, sizeof(cmd));
+    if(ret) {
+        printf("SCENIC IB: scenic_ib_modify_qp - ibv_cmd_modify_qp failed with ret=%d\n", ret);
+        return ret;
+    }
+
+    // Step 2: Actual implementation of state transitions including HW-interactions 
+    if(attr_mask & IBV_QP_STATE) {
+        switch(attr->qp_state) {
+            case IBV_QPS_INIT:
+                // Couldn't give a flying f 'bout access flags for now, so just focus on the port number 
+                if(attr_mask & IBV_QP_PORT) {
+                    scenic_qp->port = attr->port_num;
+                }
+                printf("SCENIC IB: scenic_ib_modify_qp - QP %u moved to INIT on port %u\n", scenic_qp->local_qpn, scenic_qp->port);
+                break;
+            case IBV_QPS_RTR:
+                // This should give us the remote QPN, PSN and GID / IPv4. We extract all of this and then think about calling functions accordingly 
+                if((attr_mask & IBV_QP_AV) && (attr_mask & IBV_QP_DEST_QPN)) {
+                    scenic_qp->remote_qpn = attr->dest_qp_num;
+                    scenic_qp->remote_psn = (attr_mask & IBV_QP_RQ_PSN) ? attr->rq_psn : 0;
+                    scenic_qp->remote_ip = extract_ipv4_from_gid(&attr->ah_attr.grh.dgid);
+                    scenic_qp->remote_rkey = 0; // For now - to be set later with WR 
+
+                    printf("SCENIC IB: scenic_ib_modify_qp - QP %u moved to RTR. Remote QPN=%u, Remote PSN=%u, Remote IP=0x%x\n", scenic_qp->local_qpn, scenic_qp->remote_qpn, scenic_qp->remote_psn, scenic_qp->remote_ip);
+
+                    // Set up the remote QP 
+                    cthread_set_remote_qp(scenic_qp->cthread, scenic_qp->remote_qpn, scenic_qp->remote_rkey, scenic_qp->remote_psn, scenic_qp->remote_ip);
+                     
+                    // Do an ARP lookup 
+                    cthread_arp_lookup(scenic_qp->cthread, scenic_qp->remote_ip);
+
+                    // Initial call to setup the connection in HW 
+                    cthread_write_qp_context(scenic_qp->cthread, scenic_qp->port);
+                }
+                break;
+            case IBV_QPS_RTS:
+                // Get ourselves the local PSN and then get the fuck away from all of this state bs
+                if((attr_mask & IBV_QP_SQ_PSN)) {
+                    scenic_qp->local_psn = attr->sq_psn;
+                    cthread_set_local_psn(scenic_qp->cthread, scenic_qp->local_psn);
+
+                    // Call the setup again to reinitialize the starting send PSN
+                    cthread_write_qp_context(scenic_qp->cthread, scenic_qp->port);
+                }
+                break;
+            default:
+                printf("SCENIC IB: scenic_ib_modify_qp - Unsupported QP state %d\n", attr->qp_state);
+                return -1;
+        }
+    }
+
+
     // To be implemented later
     return 0;
 }   
@@ -300,7 +466,7 @@ static int scenic_ib_modify_qp(struct ibv_qp *ibv_qp, struct ibv_qp_attr *attr, 
 // Function to post send work requests to a queue pair
 static int scenic_ib_post_send(struct ibv_qp *ibv_qp, struct ibv_send_wr *wr, struct ibv_send_wr **bad_wr) {
     // To be implemented later
-    return 0;
+    return -1;
 }   
 
 // Operations table for the SCENIC IB provider
@@ -318,6 +484,11 @@ static const struct verbs_context_ops scenic_ib_ctx_ops = {
     .create_cq = scenic_ib_create_cq,
     .destroy_cq = scenic_ib_destroy_cq,
     .poll_cq = scenic_ib_poll_cq,
+
+    .create_qp = scenic_ib_create_qp,
+    .destroy_qp = scenic_ib_destroy_qp,
+    .modify_qp = scenic_ib_modify_qp,
+    .post_send = scenic_ib_post_send,
 };
 
 // ALLOC CONTEXT Function 

@@ -189,6 +189,7 @@ cthread_t cthread_create(int32_t vfid, pid_t hpid, uint32_t device, void (*uisr)
  */
 void cthread_destroy(cthread_t ct);
 
+
 /* ============================================
  * Memory management functions
  * ============================================ */
@@ -365,6 +366,37 @@ void* cthread_init_rdma(cthread_t ct, uint32_t buffer_size, uint16_t port, const
  */
 void cthread_close_conn(cthread_t ct);
 
+/**
+ * @brief Write the RDMA QP context to the vFPGA
+ */
+void cthread_write_qp_context(cthread_t ct, uint32_t port); 
+
+/**
+ * @brief Perform ARP lookup for a given IP address
+ */
+void cthread_arp_lookup(cthread_t ct, uint32_t ip_addr); 
+
+/**
+ * @brief Sets the local RDMA QP information in the vFPGA 
+ */
+void cthread_set_local_qp(cthread_t ct, uint32_t qpn, uint32_t rkey, uint32_t psn, uint32_t ip_addr);
+
+/**
+ * @brief Sets the remote RDMA QP information in the vFPGA 
+ */
+void cthread_set_remote_qp(cthread_t ct, uint32_t qpn, uint32_t rkey, uint32_t psn, uint32_t ip_addr);
+
+/**
+ * @brief Sets the remote RDMA rkey in the vFPGA 
+ */
+void cthread_set_remote_rkey(cthread_t ct, uint32_t rkey);
+
+/**
+ * @brief Sets the local RDMA PSN in the vFPGA 
+ */
+void cthread_set_local_psn(cthread_t ct, uint32_t psn);
+
+
 /* ============================================
  * Locking functions
  * ============================================ */
@@ -437,6 +469,16 @@ int cthread_get_local_qp(cthread_t ct, cyt_ibv_q_t *q);
  * @return 0 on success, negative error code on failure
  */
 int cthread_get_remote_qp(cthread_t ct, cyt_ibv_q_t *q);
+
+/**
+ * @brief Return the local QPN
+ */
+int cthread_get_local_qpn(cthread_t ct);
+
+/**
+ * @brief Return the remote QPN
+ */
+int cthread_get_remote_qpn(cthread_t ct);
 
 /* ============================================
  * Debug functions

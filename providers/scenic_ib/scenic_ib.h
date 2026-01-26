@@ -124,6 +124,10 @@ struct scenic_ib_cq {
     // Linkage in the list of CQs
     struct list_node cq_list_node;
 
+    // List of associated QPs
+    struct list_head qp_send_list;
+    struct list_head qp_recv_list;
+
     // Store the CQ number
     uint32_t cqn;
 };
@@ -137,7 +141,14 @@ static inline struct scenic_ib_cq *to_scenic_ib_cq(struct ibv_cq *ibv_cq) {
 struct scenic_ib_qp {
     struct ibv_qp ibv_qp;
     struct list_node qp_list_node;
-    uint32_t qpn;
+    uint32_t local_qpn;
+    uint32_t remote_qpn;
+    uint32_t port; 
+    uint32_t remote_psn;
+    uint32_t local_psn;  
+    uint32_t remote_rkey; 
+    uint32_t local_rkey; 
+    uint32_t remote_ip; 
 
     // cThread as the Coyote-FPGA abstraction
     struct cthread_handle *cthread;
