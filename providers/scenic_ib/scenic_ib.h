@@ -150,9 +150,37 @@ struct scenic_ib_qp {
     uint32_t local_rkey; 
     uint32_t remote_ip; 
 
+    // List of WRs posted to this QP
+    struct list_head wr_list;
+
+    // Number of polled completions 
+    uint32_t num_polled_completions_write;
+    uint32_t num_polled_completions_read; 
+
     // cThread as the Coyote-FPGA abstraction
     struct cthread_handle *cthread;
 };
+
+// Structure for WRs associated with a QP 
+struct scenic_ib_wr {
+    struct list_node wr_list_node; 
+    cyt_oper_t opcode;
+    uint32_t wr_id;
+    uint32_t num_of_calls; 
+}; 
+
+// Little helper function that translates between cyt_oper_t and ibv_wr_opcode
+static inline enum ibv_wr_opcode cyt_opcode_to_ibv_opcode(cyt_oper_t cyt_opcode) {
+    switch(cyt_opcode) {
+        case CYT_OPER_REMOTE_RDMA_READ:
+            return IBV_WR_RDMA_READ;
+        case CYT_OPER_REMOTE_RDMA_WRITE:
+            return IBV_WR_RDMA_WRITE;
+        default:
+            return IBV_WR_SEND; // Default fallback
+    }
+}
+
 
 // Helper to cast from ibv_qp to scenic_ib_qp
 static inline struct scenic_ib_qp *to_scenic_ib_qp(struct ibv_qp *ibv_qp) {

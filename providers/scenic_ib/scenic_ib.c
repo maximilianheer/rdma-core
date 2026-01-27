@@ -279,6 +279,84 @@ static int scenic_ib_destroy_cq(struct ibv_cq *ibv_cq) {
 
 // Function to poll a CQ 
 static int scenic_ib_poll_cq(struct ibv_cq *ibv_cq, int num_entries, struct ibv_wc *wc) {
+    
+    // STEP 1: Get all associated structures 
+    struct scenic_ib_cq *scenic_cq = to_scenic_ib_cq(ibv_cq);
+    struct scenic_ib_context *scenic_ctx = to_scenic_ib_context(ibv_cq->context);
+    int polled_count = 0;
+
+    // FOR NOW WE ASSUME ONLY SEND CQs
+
+    // Check if there are any associated QPs
+    if (list_empty(&scenic_cq->qp_send_list)) {
+        return 0;
+    }   
+
+    // Get the first QP in the send list
+    struct scenic_ib_qp *current_qp = list_top(&scenic_cq->qp_send_list, struct scenic_ib_qp, qp_list_node);
+
+    // STEP 2: Loop until we have filled the requested number of entries or there are no more completions
+    while ((polled_count < num_entries) && (current_qp != NULL)) {
+        // Poll completions for the current QP
+        current_qp->num_polled_completions_write += cthread_check_completed(current_qp->cthread, CYT_OPER_REMOTE_RDMA_WRITE);
+        current_qp->num_polled_completions_read += cthread_check_completed(current_qp->cthread, CYT_OPER_REMOTE_RDMA_READ);
+
+        // Clear the completions for this QP
+        cthread_clear_completed(current_qp->cthread);
+
+        // Now we need to look at the WRs posted to this QP and see if there are any completions 
+        struct scenic_ib_wr *current_wr = list_top(&current_qp->wr_list, struct scenic_ib_wr, wr_list_node);
+
+        bool failed_to_fulfill_wr = false;
+
+        // Iterate over the WRs posted to this QP
+        while (current_wr != NULL && polled_count < num_entries && failed_to_fulfill_wr) {
+            if(current_wr->opcode == CYT_OPER_REMOTE_RDMA_WRITE) {
+                if(current_qp->num_polled_completions_write >= current_wr->num_of_calls) {
+                    // We have enough completions for this WR
+                    wc[polled_count].wr_id = current_wr->wr_id;
+                    wc[polled_count].status = IBV_WC_SUCCESS;
+                    wc[polled_count].opcode = IBV_WC_RDMA_WRITE;
+                    polled_count++;
+
+                    // Decrease the number of polled completions
+                    current_qp->num_polled_completions_write -= current_wr->num_of_calls;
+
+                    // Move to the next WR
+                    list_del(&current_wr->wr_list_node);
+                    current_wr = list_top(&current_qp->wr_list, struct scenic_ib_wr, wr_list_node);
+                } else {
+                    // Not enough completions for this WR yet
+                    failed_to_fulfill_wr = true;
+                }
+            } else if(current_wr->opcode == CYT_OPER_REMOTE_RDMA_READ) {
+                if(current_qp->num_polled_completions_read >= current_wr->num_of_calls) {
+                    // We have enough completions for this WR
+                    wc[polled_count].wr_id = current_wr->wr_id;
+                    wc[polled_count].status = IBV_WC_SUCCESS;
+                    wc[polled_count].opcode = IBV_WC_RDMA_READ;
+                    polled_count++;
+
+                    // Decrease the number of polled completions
+                    current_qp->num_polled_completions_read -= current_wr->num_of_calls;
+
+                    // Move to the next WR
+                    list_del(&current_wr->wr_list_node);
+                    current_wr = list_top(&current_qp->wr_list, struct scenic_ib_wr, wr_list_node);
+                } else {
+                    // Not enough completions for this WR yet
+                    failed_to_fulfill_wr = true;
+                }
+            } else {
+                // Unsupported opcode
+                printf("SCENIC IB: scenic_ib_poll_cq - Unsupported opcode %d in WR\n", current_wr->opcode);
+                // Move to the next WR
+                list_del(&current_wr->wr_list_node);
+                current_wr = list_top(&current_qp->wr_list, struct scenic_ib_wr, wr_list_node);
+            }
+        } 
+    }
+
     // To be implemented later
     return 0;
 }
@@ -298,6 +376,11 @@ static struct ibv_qp *scenic_ib_create_qp(struct ibv_pd *pd, struct ibv_qp_init_
     scenic_qp = calloc(1, sizeof(*scenic_qp));
     scenic_qp->cthread = cthread_create(1, getpid(), 0, NULL); 
     qpn = cthread_get_local_qpn(scenic_qp->cthread);
+
+    // Initialize the list head for WRs
+    list_head_init(&scenic_qp->wr_list);
+    scenic_qp->num_polled_completions_write = 0;
+    scenic_qp->num_polled_completions_read = 0;
 
     // Step 3: Add the scenic_ib_qp structure to the local list of QPs in the context and for the specified CQ 
     pthread_mutex_lock(&scenic_ctx->scenic_lock);
@@ -384,7 +467,7 @@ static int scenic_ib_destroy_qp(struct ibv_qp *ibv_qp) {
     return 0;
 }
 
-uint32_t extract_ipv4_from_gid(union ibv_gid *gid) {
+static uint32_t extract_ipv4_from_gid(union ibv_gid *gid) {
     uint32_t ipv4_network_order;
     
     // Copy the last 4 bytes (Offset 12)
@@ -399,8 +482,7 @@ static int scenic_ib_modify_qp(struct ibv_qp *ibv_qp, struct ibv_qp_attr *attr, 
 
     // Step 1: Get the required structs
     struct scenic_ib_qp *scenic_qp = to_scenic_ib_qp(ibv_qp);
-    struct scenic_ib_context *scenic_ctx = to_scenic_ib_context(ibv_qp->context);
-    struct ibv_modify_qp cmd; 
+    struct ibv_modify_qp cmd;
     int ret; 
 
     memset(&cmd, 0, sizeof(cmd));
@@ -477,73 +559,93 @@ static int scenic_ib_post_send(struct ibv_qp *ibv_qp, struct ibv_send_wr *wr, st
     while(current_wr) {
         printf("SCENIC IB: scenic_ib_post_send - Processing WR with opcode %d\n", current_wr->opcode);
         switch(current_wr->opcode) {
-            case IBV_WR_RDMA_WRITE:
-                // What we do first: Check for the rkey and update if required 
-                uint32_t rkey = wr->wr.rdma.rkey;
-                if(scenic_qp->remote_rkey != rkey) {
-                    scenic_qp->remote_rkey = rkey;
-                    cthread_set_remote_rkey(scenic_qp->cthread, rkey);
+            case IBV_WR_RDMA_WRITE: {
+                // What we do first: Check for the rkey and update if required
+                uint32_t rkey_write = wr->wr.rdma.rkey;
+                if(scenic_qp->remote_rkey != rkey_write) {
+                    scenic_qp->remote_rkey = rkey_write;
+                    cthread_set_remote_rkey(scenic_qp->cthread, rkey_write);
                     cthread_write_qp_ctx(scenic_qp->cthread, scenic_qp->port, 0, 1);
                 }
 
-                // Next step: Generate all the required FPGA interactions to post the RDMA WRITE 
-
-                // First create the coyote SG and fill out what will stay constant for all RDMA SGEs 
-                struct cyt_rdma_sg_t rdma_sg; 
-                rdma_sg.remote_offs = 0; 
-                rdma_sg.local_stream = CYT_STRM_HOST; 
-                rdma_sg.remote_dest = current_wr->wr.rdma.remote_addr;
-
-                int accumulated_length_offset = 0; 
-
-                // Now iterate over all SGEs in the current WR 
-                for(int i = 0; i < current_wr->num_sge; i++) {
-                    struct ibv_sge *sge = &current_wr->sg_list[i];
-
-                    // Update the SGE-specific fields in the coyote SG 
-                    rdma_sg.length = sge->length; 
-                    rdma_sg.local_addr = sge->addr; 
-                    rdma_sg.local_offs = accumulated_length_offset;
-                    accumulated_length_offset += sge->length;
-
-                    // Now post the RDMA WRITE via the cthread interface 
-                    cthread_invoke_rdma(scenic_qp->cthread, CYT_RDMA_WRITE, &rdma_sg);
-                }
-                break;
-
-            case IBV_WR_RDMA_READ: 
-                // What we do first: Check for the rkey and update if required 
-                uint32_t rkey = wr->wr.rdma.rkey;
-                if(scenic_qp->remote_rkey != rkey) {
-                    scenic_qp->remote_rkey = rkey;
-                    cthread_set_remote_rkey(scenic_qp->cthread, rkey);
-                    cthread_write_qp_ctx(scenic_qp->cthread, scenic_qp->port, 0, 1);
-                }
-
-                // Next step: Generate all the required FPGA interactions to post the RDMA READ 
+                // Next step: Generate all the required FPGA interactions to post the RDMA WRITE
 
                 // First create the coyote SG and fill out what will stay constant for all RDMA SGEs
-                struct cyt_rdma_sg_t rdma_sg;
-                rdma_sg.remote_offs = 0; 
-                rdma_sg.remote_addr = current_wr->wr.rdma.remote_addr;
-                rdma_sg.local_stream = CYT_STRM_HOST;
+                cyt_rdma_sg_t rdma_sg_write;
+                rdma_sg_write.remote_offs = 0;
+                rdma_sg_write.local_stream = CYT_STRM_HOST;
+                rdma_sg_write.remote_dest = current_wr->wr.rdma.remote_addr;
 
-                int accumulated_length_offset = 0;
+                int accumulated_length_write = 0;
 
                 // Now iterate over all SGEs in the current WR
                 for(int i = 0; i < current_wr->num_sge; i++) {
                     struct ibv_sge *sge = &current_wr->sg_list[i];
+                    int is_last = (i == current_wr->num_sge - 1) ? 1 : 0;
 
                     // Update the SGE-specific fields in the coyote SG
-                    rdma_sg.length = sge->length;
-                    rdma_sg.local_addr = sge->addr;
-                    rdma_sg.local_offs = accumulated_length_offset;
-                    accumulated_length_offset += sge->length;   
+                    rdma_sg_write.len = sge->length;
+                    rdma_sg_write.local_dest = sge->addr;
+                    rdma_sg_write.local_offs = accumulated_length_write;
+                    accumulated_length_write += sge->length;
+
+                    // Now post the RDMA WRITE via the cthread interface
+                    cthread_invoke_rdma(scenic_qp->cthread, CYT_OPER_REMOTE_RDMA_WRITE, &rdma_sg_write, is_last);
+                }
+                
+                // Create a scenic_ib_wr structure to track this WR from the QP 
+                struct scenic_ib_wr *scenic_wr = calloc(1, sizeof(*scenic_wr));
+                scenic_wr->wr_id = current_wr->wr_id;
+                scenic_wr->opcode = CYT_OPER_REMOTE_RDMA_WRITE;
+                scenic_wr->num_of_calls = current_wr->num_sge;
+                list_add_tail(&scenic_qp->wr_list, &scenic_wr->wr_list_node);
+
+                break;
+            }
+
+            case IBV_WR_RDMA_READ: {
+                // What we do first: Check for the rkey and update if required
+                uint32_t rkey_read = wr->wr.rdma.rkey;
+                if(scenic_qp->remote_rkey != rkey_read) {
+                    scenic_qp->remote_rkey = rkey_read;
+                    cthread_set_remote_rkey(scenic_qp->cthread, rkey_read);
+                    cthread_write_qp_ctx(scenic_qp->cthread, scenic_qp->port, 0, 1);
+                }
+
+                // Next step: Generate all the required FPGA interactions to post the RDMA READ
+
+                // First create the coyote SG and fill out what will stay constant for all RDMA SGEs
+                cyt_rdma_sg_t rdma_sg_read;
+                rdma_sg_read.remote_offs = 0;
+                rdma_sg_read.remote_dest = current_wr->wr.rdma.remote_addr;
+                rdma_sg_read.local_stream = CYT_STRM_HOST;
+
+                int accumulated_length_read = 0;
+
+                // Now iterate over all SGEs in the current WR
+                for(int i = 0; i < current_wr->num_sge; i++) {
+                    struct ibv_sge *sge = &current_wr->sg_list[i];
+                    int is_last = (i == current_wr->num_sge - 1) ? 1 : 0;
+
+                    // Update the SGE-specific fields in the coyote SG
+                    rdma_sg_read.len = sge->length;
+                    rdma_sg_read.local_dest = sge->addr;
+                    rdma_sg_read.local_offs = accumulated_length_read;
+                    accumulated_length_read += sge->length;
 
                     // Now post the RDMA READ via the cthread interface
-                    cthread_invoke_rdma(scenic_qp->cthread, CYT_RDMA_READ, &rdma_sg);
+                    cthread_invoke_rdma(scenic_qp->cthread, CYT_OPER_REMOTE_RDMA_READ, &rdma_sg_read, is_last);
                 }
                 break;
+                // Create a scenic_ib_wr structure to track this WR from the QP 
+                struct scenic_ib_wr *scenic_wr = calloc(1, sizeof(*scenic_wr));
+                scenic_wr->wr_id = current_wr->wr_id;
+                scenic_wr->opcode = CYT_OPER_REMOTE_RDMA_READ;
+                scenic_wr->num_of_calls = current_wr->num_sge;
+                list_add_tail(&scenic_qp->wr_list, &scenic_wr->wr_list_node);
+
+                break;
+            }
 
 
             default: 
@@ -584,20 +686,17 @@ static struct verbs_context *scenic_ib_alloc_context(struct ibv_device *ibv_dev,
     // VERY LOUD PRINT STATEMENT FOR DEBUGGING PURPOSES
     // printf("SCENIC IB: scenic_ib_alloc_context - START %s\n", ibv_dev->name);
     
-    // Infrastructure elements 
+    // Infrastructure elements
     struct scenic_ib_context *scenic_ctx;
-    struct verbs_context *vctx;
-    struct ibv_get_context cmd; 
+    struct ibv_get_context cmd;
     struct userspace_cyt_rdma_alloc_ucontext_resp resp;
 
     // Allocate memory for the scenic_ib_context structure
     scenic_ctx = NULL;
     scenic_ctx = verbs_init_and_alloc_context(ibv_dev, cmd_fd, scenic_ctx, ibv_ctx, RDMA_DRIVER_UNKNOWN); 
     if(!scenic_ctx) {
-        return NULL; 
+        return NULL;
     }
-
-    vctx = &scenic_ctx->ibv_ctx;
 
     // Prepare the command structure 
     memset(&cmd, 0, sizeof(cmd));

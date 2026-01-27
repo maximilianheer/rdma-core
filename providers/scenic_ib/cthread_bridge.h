@@ -402,10 +402,14 @@ void cthread_set_remote_qp(cthread_t ct, uint32_t qpn, uint32_t rkey, uint32_t p
 void cthread_set_remote_rkey(cthread_t ct, uint32_t rkey);
 
 /**
- * @brief Sets the local RDMA PSN in the vFPGA 
+ * @brief Sets the local RDMA PSN in the vFPGA
  */
 void cthread_set_local_psn(cthread_t ct, uint32_t psn);
 
+/**
+ * @brief Sets the remote RDMA PSN in the vFPGA
+ */
+void cthread_set_remote_psn(cthread_t ct, uint32_t psn);
 
 /* ============================================
  * Locking functions
