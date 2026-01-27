@@ -466,8 +466,94 @@ static int scenic_ib_modify_qp(struct ibv_qp *ibv_qp, struct ibv_qp_attr *attr, 
 
 // Function to post send work requests to a queue pair
 static int scenic_ib_post_send(struct ibv_qp *ibv_qp, struct ibv_send_wr *wr, struct ibv_send_wr **bad_wr) {
-    // To be implemented later
-    return -1;
+    // This is one big feat -> If we master this, the path is open for glory and fame. 
+
+    // STEP 1: Get the required structures: 
+    struct scenic_ib_qp *scenic_qp = to_scenic_ib_qp(ibv_qp);
+    printf("SCENIC IB: scenic_ib_post_send - Entered function for QP %u\n", scenic_qp->local_qpn);
+
+    // STEP 2: Iterate over the linked list of work requests and process each one 
+    struct ibv_send_wr *current_wr = wr;
+    while(current_wr) {
+        printf("SCENIC IB: scenic_ib_post_send - Processing WR with opcode %d\n", current_wr->opcode);
+        switch(current_wr->opcode) {
+            case IBV_WR_RDMA_WRITE:
+                // What we do first: Check for the rkey and update if required 
+                uint32_t rkey = wr->wr.rdma.rkey;
+                if(scenic_qp->remote_rkey != rkey) {
+                    scenic_qp->remote_rkey = rkey;
+                    cthread_set_remote_rkey(scenic_qp->cthread, rkey);
+                    cthread_write_qp_ctx(scenic_qp->cthread, scenic_qp->port, 0, 1);
+                }
+
+                // Next step: Generate all the required FPGA interactions to post the RDMA WRITE 
+
+                // First create the coyote SG and fill out what will stay constant for all RDMA SGEs 
+                struct cyt_rdma_sg_t rdma_sg; 
+                rdma_sg.remote_offs = 0; 
+                rdma_sg.local_stream = CYT_STRM_HOST; 
+                rdma_sg.remote_dest = current_wr->wr.rdma.remote_addr;
+
+                int accumulated_length_offset = 0; 
+
+                // Now iterate over all SGEs in the current WR 
+                for(int i = 0; i < current_wr->num_sge; i++) {
+                    struct ibv_sge *sge = &current_wr->sg_list[i];
+
+                    // Update the SGE-specific fields in the coyote SG 
+                    rdma_sg.length = sge->length; 
+                    rdma_sg.local_addr = sge->addr; 
+                    rdma_sg.local_offs = accumulated_length_offset;
+                    accumulated_length_offset += sge->length;
+
+                    // Now post the RDMA WRITE via the cthread interface 
+                    cthread_invoke_rdma(scenic_qp->cthread, CYT_RDMA_WRITE, &rdma_sg);
+                }
+                break;
+
+            case IBV_WR_RDMA_READ: 
+                // What we do first: Check for the rkey and update if required 
+                uint32_t rkey = wr->wr.rdma.rkey;
+                if(scenic_qp->remote_rkey != rkey) {
+                    scenic_qp->remote_rkey = rkey;
+                    cthread_set_remote_rkey(scenic_qp->cthread, rkey);
+                    cthread_write_qp_ctx(scenic_qp->cthread, scenic_qp->port, 0, 1);
+                }
+
+                // Next step: Generate all the required FPGA interactions to post the RDMA READ 
+
+                // First create the coyote SG and fill out what will stay constant for all RDMA SGEs
+                struct cyt_rdma_sg_t rdma_sg;
+                rdma_sg.remote_offs = 0; 
+                rdma_sg.remote_addr = current_wr->wr.rdma.remote_addr;
+                rdma_sg.local_stream = CYT_STRM_HOST;
+
+                int accumulated_length_offset = 0;
+
+                // Now iterate over all SGEs in the current WR
+                for(int i = 0; i < current_wr->num_sge; i++) {
+                    struct ibv_sge *sge = &current_wr->sg_list[i];
+
+                    // Update the SGE-specific fields in the coyote SG
+                    rdma_sg.length = sge->length;
+                    rdma_sg.local_addr = sge->addr;
+                    rdma_sg.local_offs = accumulated_length_offset;
+                    accumulated_length_offset += sge->length;   
+
+                    // Now post the RDMA READ via the cthread interface
+                    cthread_invoke_rdma(scenic_qp->cthread, CYT_RDMA_READ, &rdma_sg);
+                }
+                break;
+
+
+            default: 
+                printf("SCENIC IB: scenic_ib_post_send - Unsupported WR opcode %d\n", current_wr->opcode);
+                *bad_wr = current_wr;
+                return -1;
+        }
+        current_wr = current_wr->next;
+    }
+    return 0;
 }   
 
 // Operations table for the SCENIC IB provider
