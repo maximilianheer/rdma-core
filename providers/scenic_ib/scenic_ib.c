@@ -426,7 +426,7 @@ static int scenic_ib_modify_qp(struct ibv_qp *ibv_qp, struct ibv_qp_attr *attr, 
                 // This should give us the remote QPN, PSN and GID / IPv4. We extract all of this and then think about calling functions accordingly 
                 if((attr_mask & IBV_QP_AV) && (attr_mask & IBV_QP_DEST_QPN)) {
                     scenic_qp->remote_qpn = attr->dest_qp_num;
-                    scenic_qp->remote_psn = (attr_mask & IBV_QP_RQ_PSN) ? attr->rq_psn : 0;
+                    scenic_qp->local_psn = (attr_mask & IBV_QP_RQ_PSN) ? attr->rq_psn : 0;
                     scenic_qp->remote_ip = extract_ipv4_from_gid(&attr->ah_attr.grh.dgid);
                     scenic_qp->remote_rkey = 0; // For now - to be set later with WR 
 
@@ -434,7 +434,8 @@ static int scenic_ib_modify_qp(struct ibv_qp *ibv_qp, struct ibv_qp_attr *attr, 
 
                     // Set up the remote QP 
                     cthread_set_remote_qp(scenic_qp->cthread, scenic_qp->remote_qpn, scenic_qp->remote_rkey, scenic_qp->remote_psn, scenic_qp->remote_ip);
-                     
+                    cthread_set_local_psn(scenic_qp->cthread, scenic_qp->local_psn);
+
                     // Do an ARP lookup 
                     cthread_arp_lookup(scenic_qp->cthread, scenic_qp->remote_ip);
 
@@ -445,11 +446,11 @@ static int scenic_ib_modify_qp(struct ibv_qp *ibv_qp, struct ibv_qp_attr *attr, 
             case IBV_QPS_RTS:
                 // Get ourselves the local PSN and then get the fuck away from all of this state bs
                 if((attr_mask & IBV_QP_SQ_PSN)) {
-                    scenic_qp->local_psn = attr->sq_psn;
-                    cthread_set_local_psn(scenic_qp->cthread, scenic_qp->local_psn);
+                    scenic_qp->remote_psn = attr->sq_psn;
+                    cthread_set_remote_psn(scenic_qp->cthread, scenic_qp->remote_psn);
 
                     // Call the setup again to reinitialize the starting send PSN
-                    cthread_write_qp_context(scenic_qp->cthread, scenic_qp->port);
+                    cthread_write_qp_ctx(scenic_qp->cthread, scenic_qp->port, 1, 0);
                 }
                 break;
             default:

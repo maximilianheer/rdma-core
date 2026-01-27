@@ -301,6 +301,18 @@ extern "C" void cthread_write_qp_context(cthread_t ct, uint32_t port) {
     }
 }
 
+extern "C" void cthread_write_qp_ctx(cthread_t ct, uint32_t port, int write_rpsn, int write_rkey) {
+    if (ct && ct->thread) {
+        ct->thread->writeQpCtx(port, write_rpsn != 0, write_rkey != 0);
+    }
+}
+
+extern "C" void cthread_write_qp_connection(cthread_t ct, uint32_t port) {
+    if (ct && ct->thread) {
+        ct->thread->writeQpConnection(port);
+    }
+}
+
 extern "C" void cthread_arp_lookup(cthread_t ct, uint32_t ip_addr) {
     if (ct && ct->thread) {
         ct->thread->doArpLookup(ip_addr);
@@ -328,6 +340,12 @@ extern "C" void cthread_set_remote_rkey(cthread_t ct, uint32_t rkey) {
 extern "C" void cthread_set_local_psn(cthread_t ct, uint32_t psn) {
     if (ct && ct->thread) {
         ct->thread->setLocalPSN(psn);
+    }
+}
+
+extern "C" void cthread_set_remote_psn(cthread_t ct, uint32_t psn) {
+    if (ct && ct->thread) {
+        ct->thread->setRemotePSN(psn);
     }
 }
 

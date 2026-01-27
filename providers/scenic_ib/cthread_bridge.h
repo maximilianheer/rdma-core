@@ -372,6 +372,16 @@ void cthread_close_conn(cthread_t ct);
 void cthread_write_qp_context(cthread_t ct, uint32_t port); 
 
 /**
+ * @brief Write the RDMA QP Ctx to the RDMA-stack 
+ */
+void cthread_write_qp_ctx(cthread_t ct, uint32_t port, int write_rpsn, int write_rkey);
+
+/**
+ * @brief Write the RDMA QP connection to the RDMA stack
+ */
+void cthread_write_qp_connection(cthread_t ct, uint32_t port);
+
+/**
  * @brief Perform ARP lookup for a given IP address
  */
 void cthread_arp_lookup(cthread_t ct, uint32_t ip_addr); 
