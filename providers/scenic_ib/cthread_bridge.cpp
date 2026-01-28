@@ -127,10 +127,13 @@ extern "C" cthread_t cthread_create(int32_t vfid, pid_t hpid, uint32_t device, v
 }
 
 extern "C" void cthread_destroy(cthread_t ct) {
+    printf("cthread_destroy called\n");
     if (ct) {
+        printf("Deleting cThread instance\n");
         delete ct->thread;
         delete ct;
     }
+    printf("cthread_destroy completed\n");
 }
 
 /* ============================================

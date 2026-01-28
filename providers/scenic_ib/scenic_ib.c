@@ -100,14 +100,17 @@ static struct ibv_pd *scenic_ib_alloc_pd(struct ibv_context *ibv_ctx) {
 // Function to deallocate a Protection Domain
 static int scenic_ib_dealloc_pd(struct ibv_pd *ibv_pd) {
     int ret; 
+    printf("SCENIC IB: scenic_ib_dealloc_pd - Entered function\n");
 
     ret = ibv_cmd_dealloc_pd(ibv_pd);
     if(ret) {
         return ret;
     } 
+    printf("SCENIC IB: scenic_ib_dealloc_pd - Deallocated PD in kernel\n");
 
     // Free the memory we allocated for the scenic_ib_pd structure
     free(to_scenic_ib_pd(ibv_pd));
+    printf("SCENIC IB: scenic_ib_dealloc_pd - Freed scenic_ib_pd structure\n");
     return 0;
 }
 
@@ -260,20 +263,24 @@ static int scenic_ib_destroy_cq(struct ibv_cq *ibv_cq) {
     struct scenic_ib_cq *scenic_cq = to_scenic_ib_cq(ibv_cq);
     struct scenic_ib_context *scenic_ctx = to_scenic_ib_context(ibv_cq->context);
     int ret;    
+    printf("SCENIC IB: scenic_ib_destroy_cq - Entered function\n");
 
     // Step 1: Remove the CQ from the local list of CQs
     pthread_mutex_lock(&scenic_ctx->scenic_lock);
     list_del(&scenic_cq->cq_list_node);
     pthread_mutex_unlock(&scenic_ctx->scenic_lock);
+    printf("SCENIC IB: scenic_ib_destroy_cq - Removed CQ from cq_list\n");
 
     // Step 2: Call the kernel to destroy the CQ
     ret = ibv_cmd_destroy_cq(ibv_cq);
     if(ret) {
         return ret;
     }
+    printf("SCENIC IB: scenic_ib_destroy_cq - Destroyed CQ in kernel\n");
 
     // Step 3: Free the memory allocated for the scenic_ib_cq structure
     free(scenic_cq);
+    printf("SCENIC IB: scenic_ib_destroy_cq - Freed scenic_cq structure\n");
     return 0;
 }
 
