@@ -456,6 +456,7 @@ static int scenic_ib_destroy_qp(struct ibv_qp *ibv_qp) {
     list_del(&scenic_qp->qp_list_node);
     pthread_mutex_unlock(&scenic_ctx->scenic_lock);
     printf("SCENIC IB: scenic_ib_destroy_qp - Removed QP from qp_list\n");
+    printf("SCENIC IB: Next is destroying cthread\n");
 
     // Step 3: Destroy the associated cthread
     cthread_destroy(scenic_qp->cthread);
