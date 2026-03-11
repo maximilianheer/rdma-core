@@ -140,7 +140,9 @@ static inline struct scenic_ib_cq *to_scenic_ib_cq(struct ibv_cq *ibv_cq) {
 // Structure to hold a Queue Pair
 struct scenic_ib_qp {
     struct ibv_qp ibv_qp;
-    struct list_node qp_list_node;
+    struct list_node qp_list_node_ctx;
+    struct list_node qp_list_node_send_cq;
+    struct list_node qp_list_node_recv_cq;
     uint32_t local_qpn;
     uint32_t remote_qpn;
     uint32_t port; 
@@ -156,6 +158,10 @@ struct scenic_ib_qp {
     // Number of polled completions 
     uint32_t num_polled_completions_write;
     uint32_t num_polled_completions_read; 
+
+    // Decrease delta
+    uint32_t decr_write; 
+    uint32_t decr_read;
 
     // cThread as the Coyote-FPGA abstraction
     struct cthread_handle *cthread;

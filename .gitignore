@@ -75,3 +75,6 @@ Session.vim
 
 # python
 *.pyc
+
+# PCAPs
+*.pcap

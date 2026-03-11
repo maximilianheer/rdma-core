@@ -122,11 +122,11 @@ typedef struct {
  */
 typedef struct {
     uint64_t local_offs;    /* Offset from local buffer address */
-    uint32_t local_stream;  /* Source buffer stream (HOST or CARD) */
-    uint32_t local_dest;    /* Local destination stream index */
+    uint64_t local_stream;  /* Source buffer stream (HOST or CARD) */
+    uint64_t local_dest;    /* Local destination stream index */
     uint64_t remote_offs;   /* Offset for remote buffer */
-    uint32_t remote_dest;   /* Remote destination stream index */
-    uint32_t len;           /* Transfer length in bytes */
+    uint64_t remote_dest;   /* Remote destination stream index */
+    uint64_t len;           /* Transfer length in bytes */
 } cyt_rdma_sg_t;
 
 /**
@@ -410,6 +410,16 @@ void cthread_set_local_psn(cthread_t ct, uint32_t psn);
  * @brief Sets the remote RDMA PSN in the vFPGA
  */
 void cthread_set_remote_psn(cthread_t ct, uint32_t psn);
+
+/**
+ * @brief Sets the local RDMA vaddr in the vFPGA
+ */
+void cthread_set_local_vaddr(cthread_t ct, void* vaddr);
+
+/**
+ * @brief Sets the remote RDMA vaddr in the vFPGA
+ */
+void cthread_set_remote_vaddr(cthread_t ct, void* vaddr);
 
 /* ============================================
  * Locking functions

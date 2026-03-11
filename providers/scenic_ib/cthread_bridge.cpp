@@ -51,6 +51,7 @@ struct cthread_handle {
  * ============================================ */
 
 static CoyoteOper to_coyote_oper(cyt_oper_t oper) {
+    // printf("CTHREAD BRIDGE: Converting operation %d to CoyoteOper\n", oper);
     switch (oper) {
         case CYT_OPER_NOOP:              return CoyoteOper::NOOP;
         case CYT_OPER_LOCAL_READ:        return CoyoteOper::LOCAL_READ;
@@ -94,6 +95,8 @@ static localSg to_local_sg(const cyt_local_sg_t *sg) {
 }
 
 static rdmaSg to_rdma_sg(const cyt_rdma_sg_t *sg) {
+    // printf("CTHREAD BRIDGE: Converting cyt_rdma_sg_t to rdmaSg with local_offs=%lu, local_stream=%u, local_dest=%u, remote_offs=%lu, remote_dest=%u, len=%u\n",
+    //        sg->local_offs, sg->local_stream, sg->local_dest, sg->remote_offs, sg->remote_dest, sg->len);
     rdmaSg result;
     result.local_offs = sg->local_offs;
     result.local_stream = sg->local_stream;
@@ -120,6 +123,7 @@ extern "C" cthread_t cthread_create(int32_t vfid, pid_t hpid, uint32_t device, v
     try {
         cthread_handle *handle = new cthread_handle;
         handle->thread = new cThread(vfid, hpid, device, uisr);
+        // printf("CTHREAD BRIDGE: Created cThread with vfid=%d, hpid=%d, device=%u\n", vfid, hpid, device);
         return handle;
     } catch (const std::exception &e) {
         return nullptr;
@@ -127,13 +131,11 @@ extern "C" cthread_t cthread_create(int32_t vfid, pid_t hpid, uint32_t device, v
 }
 
 extern "C" void cthread_destroy(cthread_t ct) {
-    printf("cthread_destroy called\n");
     if (ct) {
-        printf("Deleting cThread instance\n");
+        printf("CTHREAD BRIDGE: Destroying cThread\n");
         delete ct->thread;
         delete ct;
     }
-    printf("cthread_destroy completed\n");
 }
 
 /* ============================================
@@ -151,8 +153,10 @@ extern "C" int cthread_user_map(cthread_t ct, void *vaddr, uint32_t len) {
 }
 
 extern "C" int cthread_user_unmap(cthread_t ct, void *vaddr) {
+    printf("CTHREAD BRIDGE: Unmapping user memory at address %p\n", vaddr);
     if (!ct || !ct->thread) return -1;
     try {
+        printf("CTHREAD BRIDGE: Calling userUnmap for address %p\n", vaddr);
         ct->thread->userUnmap(vaddr);
         return 0;
     } catch (const std::exception &e) {
@@ -241,9 +245,25 @@ extern "C" int cthread_invoke_local_transfer(cthread_t ct, cyt_oper_t oper,
 extern "C" int cthread_invoke_rdma(cthread_t ct, cyt_oper_t oper, const cyt_rdma_sg_t *sg, int last) {
     if (!ct || !ct->thread || !sg) return -1;
     try {
-        ct->thread->invoke(to_coyote_oper(oper), to_rdma_sg(sg), last != 0);
+        // printf("CTHREAD BRIDGE: Invoking RDMA operation %d\n", oper);
+
+        // printf("CTHREAD BRIDGE: Arguments in the cyt_rdma_sg_t struct - local_offs=%lu, local_stream=%u, local_dest=%u, remote_offs=%lu, remote_dest=%u, len=%u\n",
+        //        sg->local_offs, sg->local_stream, sg->local_dest, sg->remote_offs, sg->remote_dest, sg->len);
+
+        rdmaSg rdma_sg = to_rdma_sg(sg);
+        // printf("CTHREAD BRIDGE: sg conversion done \n");
+
+        CoyoteOper coper = to_coyote_oper(oper);
+        // printf("CTHREAD BRIDGE: oper conversion done, coper=%d\n", coper);
+
+        // printf("Call invoke \n"); 
+        ct->thread->invoke(coper, rdma_sg, last != 0);
+        //printf("Called invoke \n"); 
+        // printf("CTHREAD BRIDGE: invoke done\n");
+
         return 0;
     } catch (const std::exception &e) {
+        printf("CTHREAD BRIDGE: exception caught in invoke_rdma\n");
         return -1;
     }
 }
@@ -349,6 +369,18 @@ extern "C" void cthread_set_local_psn(cthread_t ct, uint32_t psn) {
 extern "C" void cthread_set_remote_psn(cthread_t ct, uint32_t psn) {
     if (ct && ct->thread) {
         ct->thread->setRemotePSN(psn);
+    }
+}
+
+extern "C" void cthread_set_local_vaddr(cthread_t ct, void* vaddr) {
+    if (ct && ct->thread) {
+        ct->thread->setLocalVaddr(vaddr);
+    }
+}
+
+extern "C" void cthread_set_remote_vaddr(cthread_t ct, void* vaddr) {
+    if (ct && ct->thread) {
+        ct->thread->setRemoteVaddr(vaddr);
     }
 }
 

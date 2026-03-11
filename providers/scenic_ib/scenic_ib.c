@@ -307,12 +307,13 @@ static int scenic_ib_poll_cq(struct ibv_cq *ibv_cq, int num_entries, struct ibv_
     while ((polled_count < num_entries) && (current_qp != NULL)) {
 
         // Poll completions for the current QP.
-        int decr = 0;
-        current_qp->num_polled_completions_write = cthread_check_completed(current_qp->cthread, CYT_OPER_REMOTE_RDMA_WRITE) - decr;
-        current_qp->num_polled_completions_read += cthread_check_completed(current_qp->cthread, CYT_OPER_REMOTE_RDMA_READ);
+        current_qp->num_polled_completions_write = cthread_check_completed(current_qp->cthread, CYT_OPER_REMOTE_RDMA_WRITE) - current_qp->decr_write;
+        current_qp->num_polled_completions_read = cthread_check_completed(current_qp->cthread, CYT_OPER_REMOTE_RDMA_READ) - current_qp->decr_read;
 
+        // Print the number of polled completions for better understanding of the flow
+        // printf("QP %u: Polled completions - WRITE: %u, READ: %u\n", current_qp->local_qpn, current_qp->num_polled_completions_write, current_qp->num_polled_completions_read);
         // Clear the completions for this QP
-        cthread_clear_completed(current_qp->cthread);
+        // cthread_clear_completed(current_qp->cthread);
 
         // Now we need to look at the WRs posted to this QP and see if there are any completions
         // Gets a handle to the list of WRs associated with the current QP in the CQ 
@@ -329,9 +330,11 @@ static int scenic_ib_poll_cq(struct ibv_cq *ibv_cq, int num_entries, struct ibv_
                     wc[polled_count].status = IBV_WC_SUCCESS;
                     wc[polled_count].opcode = IBV_WC_RDMA_WRITE;
                     polled_count++;
+                    // printf("Processed completion for poll_count %d \n", polled_count);
 
                     // Decrease the number of polled completions
                     current_qp->num_polled_completions_write -= current_wr->num_of_calls;
+                    current_qp->decr_write += current_wr->num_of_calls;
 
                     // Move to the next WR
                     list_del(&current_wr->wr_list_node);
@@ -352,6 +355,7 @@ static int scenic_ib_poll_cq(struct ibv_cq *ibv_cq, int num_entries, struct ibv_
 
                     // Decrease the number of polled completions
                     current_qp->num_polled_completions_read -= current_wr->num_of_calls;
+                    current_qp->decr_read += current_wr->num_of_calls;
 
                     // Move to the next WR
                     list_del(&current_wr->wr_list_node);
@@ -402,6 +406,8 @@ static struct ibv_qp *scenic_ib_create_qp(struct ibv_pd *pd, struct ibv_qp_init_
     list_head_init(&scenic_qp->wr_list);
     scenic_qp->num_polled_completions_write = 0;
     scenic_qp->num_polled_completions_read = 0;
+    scenic_qp->decr_write = 0;
+    scenic_qp->decr_read = 0;
 
     // Step 3: Add the scenic_ib_qp structure to the local list of QPs in the context and for the specified CQ
     pthread_mutex_lock(&scenic_ctx->scenic_lock);
@@ -594,6 +600,8 @@ static int scenic_ib_post_send(struct ibv_qp *ibv_qp, struct ibv_send_wr *wr, st
                 for(int i = 0; i < current_wr->num_sge; i++) {
                     struct ibv_sge *sge = &current_wr->sg_list[i];
                     int is_last = (i == current_wr->num_sge - 1) ? 1 : 0;
+                    // Print last
+                    // printf("tlast: %d \n", is_last);
 
                     // Update the SGE-specific fields in the coyote SG
                     rdma_sg_write.len = sge->length;
@@ -607,6 +615,8 @@ static int scenic_ib_post_send(struct ibv_qp *ibv_qp, struct ibv_send_wr *wr, st
                     accumulated_length_write += sge->length;
 
                     // Now post the RDMA WRITE via the cthread interface
+                    // printf("Posting RDMA WRITE for WR ID %lu, SGE %d: local_addr=0x%lx, remote_addr=0x%lx, length=%u\n",
+                    //        current_wr->wr_id, i, rdma_sg_write.local_dest, rdma_sg_write.remote_dest, rdma_sg_write.len);
                     cthread_invoke_rdma(scenic_qp->cthread, CYT_OPER_REMOTE_RDMA_WRITE, &rdma_sg_write, is_last);
                 }
 
