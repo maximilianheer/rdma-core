@@ -1,33 +1,29 @@
 # Enable C++ for this provider (needed for cthread_bridge.cpp)
 enable_language(CXX)
-
-include(ExternalProject)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 # Coyote root directory (relative to rdma-core/providers/scenic_ib)
-# Path: scenic_ib -> providers -> rdma-core -> sw -> cyt_rdma_driver
-set(COYOTE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../..")
-set(COYOTE_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/coyote-build")
+# Path: scenic_ib -> providers -> rdma-core -> submodules -> Coyote
+set(COYOTE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../Coyote")
 
-# Build Coyote library automatically as an external project
-ExternalProject_Add(coyote_lib
-    SOURCE_DIR "${COYOTE_ROOT}/cmake"
-    BINARY_DIR "${COYOTE_BUILD_DIR}"
-    CMAKE_ARGS
-        # -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-        -DCMAKE_BUILD_TYPE=Release
-        -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
-        -DEN_AVX=1
-    INSTALL_COMMAND ""
-    BUILD_BYPRODUCTS "${COYOTE_BUILD_DIR}/libCoyote.so"
-)
+# Build Coyote sources as a static library (Coyote's own CMakeLists.txt is
+# designed for a standalone executable, so we cannot use add_subdirectory).
+set(EN_AVX "1" CACHE STRING "AVX enabled.")
 
-# Create imported target for the built Coyote library
-add_library(Coyote SHARED IMPORTED)
-set_target_properties(Coyote PROPERTIES
-    IMPORTED_LOCATION "${COYOTE_BUILD_DIR}/libCoyote.so"
-    INTERFACE_INCLUDE_DIRECTORIES "${COYOTE_ROOT}/sw/include"
-)
-add_dependencies(Coyote coyote_lib)
+file(GLOB COYOTE_SOURCES "${COYOTE_ROOT}/sw/src/*.cpp")
+add_library(Coyote STATIC ${COYOTE_SOURCES})
+target_include_directories(Coyote PUBLIC "${COYOTE_ROOT}/sw/include" "${COYOTE_ROOT}/sw/include/coyote")
+set_target_properties(Coyote PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON POSITION_INDEPENDENT_CODE ON)
+
+find_package(Boost COMPONENTS program_options REQUIRED)
+target_link_libraries(Coyote PUBLIC ${Boost_LIBRARIES} pthread)
+
+if(EN_AVX)
+    target_compile_options(Coyote PRIVATE -pthread -mavx -march=native -O3)
+else()
+    target_compile_options(Coyote PRIVATE -pthread -march=native -O1)
+endif()
 
 # Build the scenic_ib provider
 rdma_provider(scenic_ib libscenic_ib.map
@@ -35,14 +31,5 @@ rdma_provider(scenic_ib libscenic_ib.map
     cthread_bridge.cpp
 )
 
-# Link against the Coyote library
+# Link against Coyote; include directories are propagated automatically via the target
 target_link_libraries(scenic_ib-rdmav${IBVERBS_PABI_VERSION} LINK_PRIVATE Coyote)
-
-# Ensure Coyote is built before scenic_ib
-add_dependencies(scenic_ib-rdmav${IBVERBS_PABI_VERSION} coyote_lib)
-
-# Set C++ standard for C++ source files
-set_source_files_properties(
-    cthread_bridge.cpp
-    PROPERTIES COMPILE_FLAGS "-std=c++17"
-)
