@@ -20,6 +20,11 @@ find_package(Boost COMPONENTS program_options REQUIRED)
 target_link_libraries(Coyote PUBLIC ${Boost_LIBRARIES} pthread)
 
 if(EN_AVX)
+    # Define EN_AVX as a preprocessor macro so that cThread.cpp's #ifdef EN_AVX
+    # blocks are compiled in: this controls which FPGA register region is mapped
+    # (MMAP_CNFG_AVX vs MMAP_CNFG) and which register offsets are used at runtime.
+    # PUBLIC ensures the define also applies to cthread_bridge.cpp in the provider target.
+    target_compile_definitions(Coyote PUBLIC EN_AVX)
     target_compile_options(Coyote PRIVATE -pthread -mavx -march=native -O3)
 else()
     target_compile_options(Coyote PRIVATE -pthread -march=native -O1)
